@@ -152,7 +152,7 @@ const QUIZZES = {
     { q: 'Which port does BIG-IP use to send metadata to the Collector?', a: ['TCP 443', 'TCP 8000', 'TCP 6514, HSL over TLS', 'UDP 514'], c: 2, why: 'BIG-IP → Collector is TCP 6514 (HSL with TLS) and is required.' },
     { q: 'Which connection is needed only if you want enforcement?', a: ['Browser → Web UI on 8000', 'BIG-IP → Collector on 6514', 'APIsec LE → BIG-IP management on 443 (iControl REST)', 'APIsec LE → F5 cloud on 443'], c: 2, why: 'The Management Connector reaches BIG-IP management on TCP 443 only for enforcement.' },
     { q: 'Does APIsec LE add latency to API traffic?', a: ['Yes, a few ms per request', 'Only when blocking', 'No, discovery is out-of-band', 'Only in Advanced API Security mode'], c: 2, why: 'BIG-IP forwards metadata out-of-band; no proxy is inserted in the data path.' },
-    { q: 'Which task needs an internet-connected machine?', a: ['Pulling container images', 'The licensing report exchange', 'Endpoint discovery', 'Blocking via iControl REST'], c: 1, why: 'Licensing uses a decoupled model: report.json and the Signed ACK go through an operator workstation with internet. The APIsec LE host stays offline.' },
+    { q: 'Which task needs an internet-connected machine?', a: ['Day-to-day discovery traffic', 'The licensing report exchange', 'Endpoint discovery', 'Blocking via iControl REST'], c: 1, why: 'Licensing uses a decoupled model: report.json and the Signed ACK go through an operator workstation with internet. The APIsec LE host stays offline.' },
     { q: 'The ingestion counter is not increasing. What should you check?', a: ['The Web UI certificate', 'TCP 6514 reachability, serverssl on the Internal Logging VS, and the iRule pool name and attachment', 'The license telemetry report', 'The OpenAPI schema version'], c: 1, why: 'Those are the documented ingestion checks.' },
   ],
   2: [
@@ -449,7 +449,7 @@ function reducer(state, a) {
     }
     case 'LICENSE_Q': {
       if (a.right) return complete(log(s, 'ok', 'Correct: only the licensing report exchange needs internet, via an operator workstation (decoupled model).'), 'license');
-      return award(log(s, 'warn', 'Not that one. The APIsec LE host never needs internet; images ship in the package and discovery/enforcement are local.'), -5, 'Licensing check');
+      return award(log(s, 'warn', 'Not that one. No internet is needed for normal operation: discovery and enforcement are local. Only the licensing report exchange goes through an internet-connected workstation.'), -5, 'Licensing check');
     }
     case 'BIGIP_ADD':
       if (s.deploy.status !== 'running') return log(s, 'warn', 'Deploy APIsec LE first.');
@@ -1079,14 +1079,14 @@ function DeployTab({ s, dispatch }) {
   const d = s.deploy;
   const running = d.status === 'running';
   const steps = d.pkg === 'compose'
-    ? ['# Linux host · Docker Engine 20.10+ · Docker Compose 2.0+ · Bash 4+', 'tar -xzf <apisec-le-package>.tgz && cd <package-dir>', './install_local.sh --default', '# loads the images shipped in the package; no registry or internet', '# the script prints the host’s usable IP addresses']
+    ? ['# Linux host · Docker Engine 20.10+ · Docker Compose 2.0+ · Bash 4+', 'tar -xzf <apisec-le-package>.tgz && cd <package-dir>', './install_local.sh --default', '# no internet needed for normal operation', '# the script prints the host’s usable IP addresses']
     : ['# Kubernetes 1.26+ · kubectl · Helm 3.10+', '# set persistent storage + resource requests/limits (values in the package README)', 'helm install apisec-le <chart-from-package> -n apisec-le -f values.yaml', '# expose the UI on 8000 via ingress, load balancer or NodePort', '# pods ready'];
   const run = () => {
     steps.forEach((t, i) => setTimeout(() => dispatch({ type: 'DEPLOY_STEP', step: i + 1, text: t.startsWith('#') ? t : `$ ${t}` }), i * 500));
     setTimeout(() => dispatch({ type: 'DEPLOY_DONE' }), steps.length * 500 + 200);
   };
   const [pick, setPick] = useState(null);
-  const opts = ['Pulling the container images', 'The licensing report exchange (report.json / Signed ACK)', 'Endpoint discovery', 'Blocking via iControl REST'];
+  const opts = ['Day-to-day dashboard and inventory use', 'The licensing report exchange (report.json / Signed ACK)', 'Endpoint discovery', 'Blocking via iControl REST'];
   return (
     <>
       <Card title="1 · Choose a package and deploy" icon={Boxes} right={<Pill color={running ? C.green : C.slate}>{d.status}</Pill>}>
