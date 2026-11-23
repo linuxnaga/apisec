@@ -1,3 +1,14 @@
+# F5 security academies: gamified flow simulators
+
+This repo has two single-page simulators built with the same pattern (React, Tailwind CSS, Lucide icons, `useState` + `useReducer`):
+
+| Page | Simulator | Source |
+|---|---|---|
+| `/` (`index.html`) | **APIsec LE Academy** for F5 API Security Local Edition | [`src/APIsecSimulator.jsx`](src/APIsecSimulator.jsx) |
+| `/ai-security.html` | **AI Security Academy** for F5 AI Security (AI Guardrails, AI Red Team, AI Remediate) | [`src/ai-security/AISecuritySimulator.jsx`](src/ai-security/AISecuritySimulator.jsx) |
+
+Each HUD links to the other simulator.
+
 # APIsec LE Academy: F5 API Security Local Edition flow simulator
 
 A gamified, single-page learning simulator for **F5 API Security Local Edition (APIsec LE)**, built for classroom use.
@@ -9,7 +20,7 @@ A gamified, single-page learning simulator for **F5 API Security Local Edition (
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173  ·  AI Security: http://localhost:5173/ai-security.html
 npm run build    # static build in dist/
 ```
 
@@ -30,3 +41,22 @@ Product behaviour follows the **F5 API Security Local Edition 1.2.6** docs on cl
 
 - **Simulated:** hostnames, IPs, endpoint names, timings, the 30-day zombie threshold (the docs say only "an extended period"), and the risk-factor weights (the factors are documented, the weights are not).
 - **Not in the docs, so not taught as fact:** sizing figures, the iRule body and exact metadata fields, accepted OpenAPI versions, and SIEM/SOAR export.
+
+# AI Security Academy: F5 AI Security flow simulator
+
+| Area | Details |
+|---|---|
+| HUD | SecOps rank (Lvl 1 Prompt Observer → Lvl 5 AI Security Architect), XP bar, mastery %, 4 badges (Guarded Gateway, PII & Injection Shield, Red Team Operator, Closed-Loop Remediator), Field Guide, Reset Simulation |
+| Skill tree | 1 Platform Architecture, Connections & Projects · 2 AI Guardrails: Runtime Prompt & Response Scanning · 3 Custom Guardrails, Prompt Logs & Agentic Fingerprints · 4 AI Red Team & AI Remediate. Each Boss Quiz (75% to pass) unlocks the next module |
+| Flow canvas | Apps & agents → (BIG-IP LTM as the recommended L4 LB, self-hosted only) → AI Guardrails proxy → Request Scan → Connection → model providers, and back through Response Scan. Below it, the platform: Projects & Tokens, Prompt Logs, Dashboard & Audit, Agent Sessions, AI Red Team, Reports, AI Remediate, Deployment. Animated prompts turn red where a guardrail blocks them; clickable inspector cards on every node |
+| Console lab | Setup & Connect (SaaS us1/eu1 or self-hosted readiness check, Connections > Models > Test and connect, Guardrails vs Red Team project, token scopes, OpenAI SDK base URL), Prompt Traffic replay, Guardrails (Enable, Scan direction, Block/Audit, Enforce, Comprehensive/Performance, custom GenAI/regex/keyword builder), Prompt Logs & Agents (outcome filters, request vs response scan detail, agentic fingerprints, dashboard), AI Red Team (All Attacks, custom-intent campaign, reports, refusal phrases), AI Remediate (request → Ready → import/deploy in Audit → Block → rerun) |
+| Missions | 1 Onboard a Guarded Support Chatbot · 2 Stop the PII & Prompt-Injection Leak · 3 Red Team → Remediate → Re-test, plus 4 lab-bonus objectives |
+| Field Guide | 10 pages that cost XP to open, each citing its docs page |
+
+## Accuracy (AI Security)
+
+Product behaviour follows the F5 AI Security docs (`docs.f5.com/ai-security/`, served from `docs.aisecurity.f5.com`): project scopes and types, token scopes, connection fields and auth types, guardrail packages and the 11 PII core entities, scan directions, Block/Audit, Comprehensive vs Performance, custom guardrail types and directions, prompt-log outcomes, fingerprints, attack types/vectors/converters, report cards, refusal checks, retries, AI Remediate statuses and the F1 target, and the self-hosted Kubernetes requirements.
+
+- **Simulated:** hostnames, prompts and model answers, Red Team success rates, the CASI value, token counts and timings. The AI Remediate numbers (10% → 92%, F1 0.93, TP/FP/TN/FN) are the docs' own example values.
+- **Teaching assumptions, labelled in the UI:** Audit hits appear as `flagged` in Prompt Logs; reruns of the custom campaign go through the project so its guardrails apply.
+- **Not in the docs, so not taught as fact:** a CASI range or formula, a redact/mask action, a BIG-IP or NGINX enforcement integration (BIG-IP LTM appears only as the recommended L4 load balancer), general CPU/RAM sizing, and the raw auth header.
