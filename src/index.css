@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.animate-fade-in { animation: fadeIn 0.35s ease-out both; }
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }
+.animate-slide-in { animation: slideIn 0.3s ease-out both; }
+@keyframes dash { to { stroke-dashoffset: -24; } }
+.flow-dash { stroke-dasharray: 6 6; animation: dash 1.2s linear infinite; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
