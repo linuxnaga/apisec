@@ -740,6 +740,9 @@ function HUD({ s, dispatch }) {
           })}
         </div>
         <div className="flex items-center gap-2">
+          <a href="./ai-security.html" className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800" title="Open the F5 AI Security simulator">
+            <Sparkles size={14} /> AI Security sim
+          </a>
           <Btn onClick={() => dispatch({ type: 'SET', patch: { drawer: true } })}><Lightbulb size={14} className="text-amber-400" /> Field Guide</Btn>
           <Btn onClick={() => { if (window.confirm('Reset the simulation, XP and badges?')) dispatch({ type: 'RESET' }); }}><RotateCcw size={14} /> Reset Simulation</Btn>
         </div>
