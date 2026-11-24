@@ -18,10 +18,13 @@ A gamified, single-page learning simulator for **F5 API Security Local Edition (
 
 ## Run it
 
+The dev server uses port **5280** (not Vite's default 5173) with `strictPort`, so it stops with an error instead of switching ports if 5280 is busy. To use another port: `npm run dev -- --port 6000`.
+
 ```bash
 npm install
-npm run dev      # http://localhost:5173  ·  AI Security: http://localhost:5173/ai-security.html
+npm run dev      # http://localhost:5280  ·  AI Security: http://localhost:5280/ai-security.html
 npm run build    # static build in dist/
+npm run preview  # serves dist/ on http://localhost:5281
 ```
 
 ## What's inside
