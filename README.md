@@ -37,6 +37,16 @@ npm run preview  # serves dist/ on http://localhost:5281
 | Console lab | Deploy & Sign-in (Compose/Helm, admin/admin change, decoupled licensing), BIG-IP Integration wizard, Traffic Replay + Analyze Now + fast-forward, API Inventory (dashboard tiles, filters, batch Approve/Reject/Block, View selected API, Discovery Rules, Dynamic Path Templates), Schema (OAS) baseline + exports, Enforcement (Management Connectivity, Block via iControl REST, HTTP/HTTPS known issue) |
 | Missions | 1 Zero-Latency Air-Gapped Onboarding · 2 Hunting the Shadow PII Leak · 3 Closing the Loop with BIG-IP AWAF Enforcement. Objectives tick off automatically. There are also 3 lab-bonus objectives |
 | Field Guide | 9 pages that cost XP to open. Each one cites its doc page |
+| Lab Guide | Free side panel with step-by-step walkthroughs for each mission and bonus lab: where to go, what to click, what you should see and why it matters. Steps tick off automatically and **Take me there** opens the right tab. Also a getting-started tour and a troubleshooting page |
+| Component Guide | A view (next to Split / Flow / Console) that explains every component in plain words: what it receives and sends, its ports, and how to use it in the lab, plus an 8-step "one request end to end" walkthrough. Inspector cards on the canvas show the same summary |
+
+## Lab walkthroughs and component reference
+
+The full step-by-step instructions for all three missions, the bonus labs, troubleshooting, and a table of what each component does are in [`docs/apisec-le-lab-guide.md`](docs/apisec-le-lab-guide.md). In short:
+
+1. **Mission 1:** Deploy & Sign-in → sign in and change password → licensing check → click the five telemetry-chain nodes → BIG-IP Integration wizard (VS mode API Security) → Replay normal traffic → Analyze Now.
+2. **Mission 2:** Replay shadow debug calls → Analyze Now → filter shadow → open the High-risk SSN endpoint → Upload Schema → approve 3 documented endpoints → fast-forward 30 days → retire the legacy-auth zombie.
+3. **Mission 3:** Test Management Connectivity → Block debug/users (fails: HTTP/HTTPS known issue) → switch to a Fundamental-template policy → Block again → replay the attack and watch it stop at the WAF → export a report.
 
 ## Accuracy
 
