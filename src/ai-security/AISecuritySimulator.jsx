@@ -22,6 +22,7 @@ import {
   KeyRound, Layers, LayoutDashboard, Lightbulb, Lock, MessageSquare, Monitor, Network, Play,
   Plug, Radar, Regex, RotateCcw, ScrollText, Send, Server, Shield, ShieldAlert, ShieldCheck,
   Skull, Sparkles, Swords, Target, Terminal, Trophy, Users, Workflow, Wrench, X, Zap,
+  Compass, ListChecks, MousePointerClick, Flag, Info, Route, PanelRightClose,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -255,7 +256,9 @@ function scanSide(tags, side, gs) {
   const hits = [];
   for (const g of gs) {
     if (!g.enabled || !covers(g.dir, side)) continue;
-    const t = tags.find((x) => g.match.some((m) => x.startsWith(m)));
+    // 'pii:' is a prefix (any PII entity); every other match is an exact content tag,
+    // so a keyword for the codes in the answer ('discount') does not also match the request ('discount-intent').
+    const t = tags.find((x) => g.match.some((m) => (m.endsWith(':') ? x.startsWith(m) : x === m)));
     if (t) hits.push({ id: g.id, name: g.name, mode: g.mode, tag: t.replace(/^pii:/, '') });
   }
   return hits;
@@ -352,11 +355,239 @@ const NODE_INFO = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Component Guide: what each piece does, in plain language            */
+/* ------------------------------------------------------------------ */
+// Facts restate NODE_INFO / FIELD_GUIDE (F5 AI Security docs). `node` = the canvas node to show.
+const COMPONENTS = {
+  clients: { name: 'Chat App', node: 'clients',
+    plain: 'The customer support chatbot. It keeps using the OpenAI SDK; only two settings change: its base URL points at AI Security instead of the model provider, and its API key is an AI Security token.',
+    gets: 'Model answers that passed the response scan', sends: `Prompts to {BASE_URL}/openai/${CONN} over HTTPS`,
+    lab: 'Every Prompt Traffic burst starts here. Setup & Connect → 5 · Route the app teaches the base URL.' },
+  agent: { name: 'AI Agent (Claude Code)', node: 'agent',
+    plain: 'An AI agent whose Anthropic traffic goes through an Agentic project. Each session sends a unique x-cai-metadata-session-id header, so AI Security can build an agentic fingerprint of what the agent did.',
+    gets: 'Model answers and tool-call results', sends: 'Prompts to <workspace>/anthropic/<connection>',
+    lab: 'Prompt Logs & Agents → Agent sessions (Module 3 bonus).' },
+  lb: { name: 'BIG-IP LTM (L4 load balancer)', node: 'lb',
+    plain: 'Self-hosted only. F5 recommends an external Layer 4 load balancer such as BIG-IP LTM in front of the AI Guardrails proxy, but any brand works. It only spreads traffic; it does not scan prompts.',
+    gets: 'App and agent traffic', sends: 'The same traffic to the AI Guardrails proxy',
+    lab: 'Only relevant if you pick Self-hosted in Setup & Connect. In SaaS (us1, eu1) there is nothing to deploy here.' },
+  gateway: { name: 'AI Guardrails proxy', node: 'gateway',
+    plain: 'The heart of runtime protection. It checks the token, works out which project the request belongs to, runs the request guardrails, forwards allowed prompts to the model connection, runs the response guardrails, and logs the result. It speaks OpenAI- and Anthropic-compatible APIs and also offers a scan-only API.',
+    gets: 'Prompts from apps and agents', sends: 'Allowed prompts to the connection, answers back to the app, records to Prompt Logs',
+    lab: 'A project token runs only that project\'s guardrails; an organization token runs all globally available ones.' },
+  reqscan: { name: 'Request Scan', node: 'reqscan',
+    plain: 'Runs the guardrails whose Scan direction includes prompts. In Block mode a hit stops the prompt here, so the model is never called and the response scan never runs. In Audit mode the hit is recorded and the prompt continues.',
+    gets: 'The incoming prompt', sends: 'Allowed prompts on to the connection, or a block',
+    lab: 'Mission 2. Watch red packets stop at Request Scan, then open the record in Prompt Logs.' },
+  conn: { name: 'Model connection', node: 'conn',
+    plain: `The saved link to a model provider ("${CONN}"), created under Connections > Models with a display name, a case-sensitive model name and an API key. It is the project's default model and the target Red Team campaigns attack.`,
+    gets: 'Allowed prompts from the proxy', sends: 'Calls to the provider\'s API',
+    lab: 'Setup & Connect → 2. Test and connect sends "Hello there" and passes on statusCode 200.' },
+  llm: { name: 'Model providers', node: 'llm0',
+    plain: 'The third-party models: OpenAI, Anthropic, Azure, watsonx, Hugging Face, OpenAI Compatible or a custom YAML connection. Most of the 10–30 s two-way scanning time is the model itself; F5 adds about 500 ms.',
+    gets: 'Prompts through the connection', sends: 'Answers back for the response scan',
+    lab: 'The boxes on the right of the canvas. Packets that reach them were allowed.' },
+  respscan: { name: 'Response Scan', node: 'respscan',
+    plain: 'Runs the guardrails whose Scan direction includes responses, on what the model returned, before the app sees it. This is how you catch a model that over-shares, for example leaking a customer\'s email.',
+    gets: 'The model\'s answer', sends: 'The answer to the app, or a block',
+    lab: 'Mission 2: set PII core to Prompts and responses to catch the email leak.' },
+  packages: { name: 'Guardrail packages', node: 'packages',
+    plain: 'The rules a project applies. F5 packages (PII core, Adversarial attacks, Restricted topics, EU AI Act) are maintained by F5 research; you can add custom GenAI, Regex or Keyword guardrails; AI Remediate adds generated ones. Each has Enable, Scan direction, Mode (Block or Audit) and Enforce.',
+    gets: 'Your settings on the Guardrails tab', sends: 'The rule set the request and response scans use',
+    lab: 'Guardrails tab. Comprehensive = one guardrail per topic; Performance = one CPU-only guardrail per package.' },
+  projects: { name: 'Projects & tokens', node: 'projects',
+    plain: 'A project groups a default model, guardrails, admins and tokens. Scope is Guardrails (type Agentic, App, Bot or Chat) or Red Team. Tokens are Personal, Organization or Project; a Project token is the clean choice for one app.',
+    gets: 'Your setup choices', sends: 'Which guardrails apply to each request',
+    lab: 'Setup & Connect → 3 and 4.' },
+  logs: { name: 'Prompt Logs', node: 'logs',
+    plain: 'The history of every prompt: the prompt, the response, the outcome (blocked, passed or flagged), timestamps and user info. You filter it by provider, project, type and outcome, and export it.',
+    gets: 'A record from the proxy for every request', sends: 'Evidence for you: what was caught, where, and by which guardrail',
+    lab: 'Prompt Logs & Agents. Click a record to see the request and response scans side by side.' },
+  dash: { name: 'Dashboard & audit', node: 'dash',
+    plain: 'Admin views of "Token usage by guardrail" and "Top 5 projects by token use", plus the audit log of events such as api-token-created and remediation-deployed.',
+    gets: 'Usage and admin events', sends: 'Capacity and accountability information',
+    lab: 'Prompt Logs & Agents → Dashboard & audit.' },
+  fingerprint: { name: 'Agent sessions (fingerprints)', node: 'fingerprint',
+    plain: 'For Agentic projects only: each agent session gets a fingerprint with its input, agent and tool-call messages, the guardrails that ran, a generated title, the full system prompt and an action timeline.',
+    gets: 'Agent traffic tagged with a session ID', sends: 'A per-session timeline you can review',
+    lab: 'Prompt Logs & Agents → Agent sessions → Fingerprints › View.' },
+  redteam: { name: 'AI Red Team', node: 'redteam',
+    plain: 'Attacks your model connection on purpose so you find weaknesses before attackers do. Four attack types: Signature (curated, monthly), Operational (fuzzing, TLS), Agentic Warfare (an agent iterates on an intent) and Agent attack prompts (single-turn attacks from your custom intent).',
+    gets: 'A campaign definition', sends: 'Attack prompts to the connection',
+    lab: 'AI Red Team tab. "All Attacks" is the vendored campaign with every signature and operational attack.' },
+  reports: { name: 'Reports', node: 'reports',
+    plain: 'The results of a campaign: CASI score (signature attacks), Agentic resistance, Operational results, Recommendations, total attack count, success by vector and intent, and an OWASP mapping such as LLM01 Prompt Injection.',
+    gets: 'Campaign results', sends: 'Findings you act on, and custom-intent results for AI Remediate',
+    lab: 'AI Red Team → Reports → View. The docs give no CASI range or formula; the numbers here are invented.' },
+  remediate: { name: 'AI Remediate (early access)', node: 'remediate',
+    plain: 'Turns successful custom-intent attacks into a package of GenAI guardrails, measures how many attacks they prevent, and retests aiming for F1 above 90%. You review it, then import, test, deploy or reject it.',
+    gets: 'A custom-intent Red Team report', sends: 'A guardrail package deployed into the project',
+    lab: 'AI Remediate tab. Deploy in Audit first, watch the logs, then switch to Block and rerun the campaign.' },
+  deploy: { name: 'Deployment (SaaS or Kubernetes)', node: 'deploy',
+    plain: 'Where the platform runs. SaaS in the us1 or eu1 region, or self-hosted on upstream Kubernetes v1.33–v1.36 (OpenShift and GCP guides exist), connected or air-gapped. A connected install needs only outbound TCP 443 to the F5 Harbor registry.',
+    gets: 'Images (from F5 Harbor, or a private registry when air-gapped)', sends: 'Nothing else outbound is required',
+    lab: 'Setup & Connect → 1 · Deployment. The docs give no general sizing figures.' },
+};
+const COMPONENT_GROUPS = [
+  { title: 'Runtime path (inline, every prompt)', color: C.crimson, ids: ['clients', 'agent', 'lb', 'gateway', 'reqscan', 'conn', 'llm', 'respscan'] },
+  { title: 'Guardrail configuration', color: C.cyan, ids: ['packages', 'projects'] },
+  { title: 'Visibility', color: C.cyan, ids: ['logs', 'dash', 'fingerprint'] },
+  { title: 'Test and fix (offline loop)', color: C.violet, ids: ['redteam', 'reports', 'remediate'] },
+  { title: 'Platform', color: C.amber, ids: ['deploy'] },
+];
+const JOURNEY = [
+  ['clients', `The app sends a prompt with the OpenAI SDK to {BASE_URL}/openai/${CONN}, using a project token as the API key.`],
+  ['lb', 'Self-hosted only: an external L4 load balancer (BIG-IP LTM recommended) passes it to the AI Guardrails proxy.'],
+  ['gateway', 'The proxy checks the token and finds the project, which decides which guardrails apply.'],
+  ['reqscan', 'Request guardrails scan the prompt. A Block hit stops it here: the model is never called and the response scan does not run.'],
+  ['conn', 'An allowed prompt goes through the connection to the model provider.'],
+  ['respscan', 'Response guardrails scan the answer before the app sees it.'],
+  ['logs', 'The proxy records the outcome (blocked, passed or flagged) in Prompt Logs; the dashboard counts the tokens.'],
+  ['redteam', 'Separately, AI Red Team attacks the connection; AI Remediate turns custom-intent findings into GenAI guardrails that are deployed back into the project.'],
+];
+
+/* ------------------------------------------------------------------ */
+/* Lab Guide: step-by-step walkthroughs                                */
+/* ------------------------------------------------------------------ */
+// Each step: where to go, what to click, what you should see, why it matters.
+// `tab` = console tab to open, `canvas` = the step happens on the flow canvas, `done` = auto-tick.
+const objDone = (id) => (s) => !!s.objectives[id];
+const LAB_GUIDE = {
+  1: {
+    goal: 'Pick where AI Security runs, connect the chatbot\'s model, create a Guardrails project and token, and route the chatbot\'s first prompts through AI Guardrails.',
+    before: 'Nothing. Start here after a Reset Simulation.',
+    steps: [
+      { title: 'Choose a deployment', tab: 'setup', done: objDone('target'),
+        do: ['Open Setup & Connect.', 'Click SaaS · us1 or SaaS · eu1 (nothing to install), or Self-hosted.', 'If you chose Self-hosted, answer the readiness check: which outbound connection does a connected install need?'],
+        expect: ['The Deployment card shows your choice and the console header shows the workspace URL.', 'Self-hosted: the right answer is TCP 443 to the F5 Harbor registry. A wrong answer costs 5 XP.'],
+        why: 'The workspace URL becomes {BASE_URL} for everything else. Self-hosted adds Kubernetes, storage, Ingress, TLS and an L4 load balancer to your job.' },
+      { title: 'Add the model connection', tab: 'setup', done: objDone('connect'),
+        do: ['In "2 · Connections > Models > Add", keep or change the Provider and Model name.', 'Click Test and connect.'],
+        expect: ['A small packet goes Connection → OpenAI on the canvas, then the log says "statusCode 200 → Configuration Saved!".'],
+        why: 'AI Security never stores your app\'s model key in the app. The connection holds it, and the test proves AI Security can reach the model.' },
+      { title: 'Create a Guardrails project', tab: 'setup', done: objDone('project'),
+        do: ['In "3 · Projects > Create", leave Scope = Guardrails and pick a Project type (Chat suits this bot).', 'Click Create.'],
+        expect: ['The card shows the project type. Choosing Scope = Red Team instead costs 5 XP: a Red Team project has no default model or guardrails.'],
+        why: 'The project decides which guardrails apply to the chatbot\'s traffic.' },
+      { title: 'Create a project-scoped token', tab: 'setup', done: objDone('token'),
+        do: ['In "4 · API token", set Scope = Project.', 'Click Create token.'],
+        expect: ['A green "Project" pill and an api-token-created audit event in the log. Personal or Organization tokens work but do not tick the objective.'],
+        why: 'A Project token runs only this project\'s guardrails, with project admin permissions. It is the least-privilege choice for one app.' },
+      { title: 'Trace the runtime path on the canvas', canvas: true, done: objDone('chain'),
+        do: ['On the flow canvas, click Chat App, AI Guardrails, Request Scan, Connection and Response Scan.', 'Read each inspector card.'],
+        expect: ['+5 XP the first time you inspect each node; the objective ticks after all five.'],
+        why: 'This is the exact path every prompt takes. Knowing it tells you where a prompt was stopped and why.' },
+      { title: 'Route the app through AI Guardrails', tab: 'setup', done: objDone('gateway'),
+        do: ['In "5 · Route the app", pick the base URL the chatbot\'s OpenAI SDK should use.'],
+        expect: [`The right answer is {BASE_URL}/openai/${CONN}. The others bypass AI Guardrails or do not exist, and cost 5 XP.`],
+        why: 'This one setting is the whole integration: the app keeps its SDK and code, but its traffic now goes through the proxy.' },
+      { title: 'Send normal traffic and find it in Prompt Logs', tab: 'traffic', done: objDone('first'),
+        do: ['Open Prompt Traffic and click Normal customers.', 'Open Prompt Logs & Agents to see the records.'],
+        expect: ['Cyan packets go Chat App → AI Guardrails → Request Scan → Connection → OpenAI and back through Response Scan. Small grey packets drop into Prompt Logs.', 'Three records with outcome passed.'],
+        why: 'Every prompt leaves a record, even when nothing is wrong. That record is your evidence later.' },
+    ],
+    result: 'Mission 1 complete: +75 XP and the Guarded Gateway badge. Take the Module 1 Boss Quiz to unlock Module 2.',
+  },
+  2: {
+    goal: 'Show that attacks and a PII leak get through with no guardrails, turn on F5 guardrails in Audit to watch, extend PII scanning to responses, then switch to Block.',
+    before: 'Mission 1 done. Leave all guardrails off until step 1 is ticked: the first step only counts with no guardrails enabled.',
+    steps: [
+      { title: 'Replay the attacks with no guardrails', tab: 'traffic', done: objDone('leak'),
+        do: ['Prompt Traffic → Prompt injection.', 'Then click PII in prompts & responses.'],
+        expect: ['Every prompt reaches the model. The log shows what the model said, including the system prompt and a customer\'s email and phone number.'],
+        why: 'This is your baseline: without guardrails, the proxy forwards everything.' },
+      { title: 'Turn on PII core and Adversarial attacks in Audit', tab: 'guardrails', done: objDone('audit'),
+        do: ['Open Guardrails.', 'For PII core and Adversarial attacks: switch Enable on and set Mode = Audit (it defaults to Block).'],
+        expect: ['The log confirms each change ("Saved automatically") and the objective ticks once both are enabled in Audit.'],
+        why: 'Audit lets you see what a guardrail would catch without breaking the app. It is the safe first step in production.' },
+      { title: 'Replay and filter for flagged', tab: 'logs', done: objDone('flagged'),
+        do: ['Prompt Traffic → Prompt injection (and PII in prompts & responses).', 'Prompt Logs & Agents → Outcome = flagged.'],
+        expect: ['Amber records: the guardrails matched, but the prompts still went through.', 'The email leak is still not flagged: PII core only scans prompts so far.'],
+        why: 'In this lab an Audit hit shows as "flagged". That mapping is a teaching assumption, labelled in the Field Guide.' },
+      { title: 'Extend PII core to responses', tab: 'guardrails', done: objDone('respdir'),
+        do: ['Guardrails → PII core → Scan direction = Prompts and responses.'],
+        expect: ['The objective ticks. Replaying the PII burst now also flags the email and phone number in the model\'s answer.'],
+        why: 'The leak is in what the model says, not what the user asks. Only a response scan can see it.' },
+      { title: 'Switch both packages to Block and replay', tab: 'guardrails', done: objDone('block'),
+        do: ['Set Mode = Block for PII core and Adversarial attacks.', 'Prompt Traffic → Prompt injection (or PII in prompts & responses).'],
+        expect: ['Red packets stop at Request Scan; the email answer is stopped at Response Scan. The log shows BLOCKED and "response scan skipped" for request blocks.'],
+        why: 'Once Audit shows the rules catch the right things, Block makes them protect users.' },
+      { title: 'Open a request-blocked record', tab: 'logs', done: objDone('skipped'),
+        do: ['Prompt Logs & Agents → Outcome = blocked.', 'Click a row marked "at request".'],
+        expect: ['Request scan shows the guardrail that blocked it. Response scan says "Did not run" and the model was not called.'],
+        why: 'A blocked prompt never reaches the model, so there is no response to scan. This saves cost and latency too.' },
+    ],
+    result: 'Mission 2 complete: +75 XP and the PII & Injection Shield badge. Modules 2 and 3 cover this; take their Boss Quizzes.',
+  },
+  3: {
+    goal: 'Prove what attackers can do with AI Red Team, turn the custom-intent findings into GenAI guardrails with AI Remediate, deploy them safely, and rerun the campaign.',
+    before: 'Mission 1 done (a model connection and the Guardrails project exist).',
+    steps: [
+      { title: 'Run the All Attacks campaign', tab: 'redteam', done: objDone('rt-all'),
+        do: ['Open AI Red Team.', 'Next to All Attacks (vendored), click Run.'],
+        expect: ['Violet packets go AI Red Team → the model. After a few seconds the log says the report is ready.'],
+        why: 'All Attacks holds every signature and operational attack: a broad first look at the model\'s weaknesses.' },
+      { title: 'Review the report', tab: 'redteam', done: objDone('rt-report'),
+        do: ['Under Reports, click View on the All Attacks report.'],
+        expect: ['Summary cards (CASI score, Agentic resistance, Operational attacks, Recommendations, Total attack count), success by vector, and the OWASP mapping (LLM01 Prompt Injection).'],
+        why: 'The report shows which attack styles work, so you know what to defend. The numbers in this lab are invented.' },
+      { title: 'Run a custom-intent campaign', tab: 'redteam', done: objDone('rt-custom'),
+        do: ['In New campaign, keep Agent attack prompts ticked and the custom intent about discount codes.', 'Click Run campaign.'],
+        expect: ['A report where the intent succeeded in 9/10 attack prompts.'],
+        why: 'A custom intent tests the risk that matters to your business. Only custom-intent results can be remediated.' },
+      { title: 'Request remediation and review it', tab: 'remediate', done: objDone('rem-ready'),
+        do: ['Open AI Remediate.', 'Click Request remediation on the custom-intent report (not All Attacks, which costs 5 XP).'],
+        expect: ['Status moves Remediation requested → In progress → Ready. Prevention 10% → 92%, F1 0.93, 2 GenAI guardrails (the docs\' own example values).'],
+        why: 'AI Remediate writes guardrails from the attacks that worked, then retests them, aiming for F1 above 90%.' },
+      { title: 'Deploy the package in Audit', tab: 'remediate', done: objDone('rem-deploy'),
+        do: ['Leave Mode = Audit.', `Click Import and deploy → ${PROJECT}.`],
+        expect: ['Status Deployed; two remediation rows appear on the Guardrails tab in Audit.'],
+        why: 'The docs\' walkthrough deploys in Audit first so you can check for false positives before blocking.' },
+      { title: 'Switch to Block and rerun the campaign', tab: 'guardrails', done: objDone('rem-block'),
+        do: ['Guardrails → set both remediation rows (Discount code disclosure, Internal pricing data request) to Mode = Block.', 'AI Red Team → Rerun campaign.'],
+        expect: ['The new report shows the intent succeeding in only 1/12 attack prompts, with "remediation guardrails blocking".'],
+        why: 'Rerunning the same campaign proves the fix works. In this lab reruns go through the project so its guardrails apply.' },
+    ],
+    result: 'Mission 3 complete: +75 XP and the Closed-Loop Remediator badge. With the All Attacks report reviewed you also hold the Red Team Operator badge. Take the Module 4 Boss Quiz.',
+  },
+};
+const BONUS_GUIDE = [
+  { title: 'Catch the discount-code leak with a custom guardrail', tab: 'guardrails', done: objDone('custom'),
+    do: ['Guardrails → Custom guardrail builder.', 'Pick a Type. For Keyword or Regex, set Direction = RESPONSE or BOTH (the codes are in the model\'s answer). GenAI also matches the request.', 'Click Create, publish v_1 & add to project, then Prompt Traffic → Discount-code social engineering.'],
+    expect: ['The log shows your custom guardrail hit. If it only scans prompts, the log tells you to change its direction.', 'After Mission 3 the remediation guardrails may block this prompt first; a GenAI custom guardrail still counts because it matches the request too.'],
+    why: 'Custom guardrails cover what F5 packages do not know about, such as your own secrets.' },
+  { title: 'Try the Performance protection type', tab: 'guardrails', done: objDone('perf'),
+    do: ['Guardrails → PII core or Adversarial attacks → Protection type = Performance.'],
+    expect: ['The log explains: one CPU-only guardrail for the whole package, modes Block or Audit.'],
+    why: 'Comprehensive uses one guardrail per topic; Performance trades detail for lower resource use.' },
+  { title: 'View an agentic fingerprint', tab: 'logs', done: objDone('fingerprint'),
+    do: ['Prompt Logs & Agents → Create Agentic project & generate API key.', 'Click Run a Claude Code session, then Fingerprints › View.'],
+    expect: ['A violet panel with the session\'s system prompt, input, agent messages and the tool call.'],
+    why: 'Fingerprints show what an agent actually did, step by step. They need an Agentic project and a unique session ID header.' },
+  { title: 'Add a custom refusal phrase', tab: 'redteam', done: objDone('refusal'),
+    do: ['AI Red Team → Refusal phrases → type a phrase → Add phrase.'],
+    expect: ['The phrase appears as a pill. It extends the built-in refusal strings org-wide.'],
+    why: 'If your model refuses in its own words, Red Team needs to recognise that as a refusal, not a successful attack.' },
+];
+const TROUBLESHOOT = [
+  ['Prompt Traffic buttons are greyed out', 'Finish Setup & Connect: deployment, connection, Guardrails project and a token.'],
+  ['Mission 2 step 1 will not tick', 'It only counts with no guardrails enabled. Turn them all off, replay both bursts, then turn them back on.'],
+  ['Nothing shows as flagged', 'Guardrails must be enabled in Audit mode (they default to Block). Replay the attacks after changing the mode.'],
+  ['The email leak is not caught', 'PII core only scans prompts by default. Set its Scan direction to Prompts and responses.'],
+  ['"Response scan did not run"', 'Expected for a request-blocked prompt: the model was never called.'],
+  ['My custom guardrail misses the leak', 'Keyword and Regex match the codes in the answer, so use direction RESPONSE or BOTH.'],
+  ['Request remediation lost XP', 'Use the custom-intent report. All Attacks results cannot be remediated.'],
+  ['The rerun still shows 9/10', 'Deploy the package, set both remediation rows to Block on the Guardrails tab, then rerun.'],
+  ['The next module is locked', 'Pass the current module\'s Boss Quiz with 75% or more.'],
+];
+
+/* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 const initialState = () => ({
   xp: 0, seq: 1, objectives: {}, missionsDone: {}, badges: {}, quizzes: {}, inspected: {}, hints: {},
   module: 1, mission: 1, view: 'split', tab: 'setup', node: null, drawer: false, quiz: null,
+  guide: true, guideTab: 'start', // Lab Guide panel (free step-by-step walkthroughs)
   target: null, selfAnswer: null,
   conn: { provider: 'OpenAI', model: 'gpt-5-mini', status: 'none' },
   project: null, token: null, gatewayPick: null,
@@ -420,7 +651,11 @@ function reducer(state, a) {
     case 'RESET': return initialState();
     case 'SET': return { ...s, ...a.patch };
     case 'VIEW': return { ...s, view: a.view };
-    case 'TAB': return { ...s, tab: a.tab, view: s.view === 'flow' ? 'split' : s.view };
+    case 'TAB': return { ...s, tab: a.tab, view: ['flow', 'components'].includes(s.view) ? 'split' : s.view };
+    case 'GOTO': { // from the Lab Guide: open a console tab and/or make sure the canvas is visible
+      const view = s.view === 'components' || (a.tab && s.view === 'flow') || (a.canvas && s.view === 'console') ? 'split' : s.view;
+      return { ...s, view, tab: a.tab || s.tab };
+    }
     case 'MODULE': return { ...s, module: a.id, tab: MODULES[a.id - 1].tab };
     case 'DISMISS': return { ...s, toasts: s.toasts.filter((t) => t.id !== a.id) };
     case 'PRUNE': return s.packets.some((p) => a.now > p.start + p.dur * 1.5) ? { ...s, packets: s.packets.filter((p) => a.now <= p.start + p.dur * 1.5) } : s;
@@ -791,6 +1026,7 @@ function HUD({ s, dispatch }) {
           <a href="./" className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800" title="Open the F5 API Security Local Edition simulator">
             <Shield size={14} /> APIsec LE sim
           </a>
+          <Btn variant={s.guide ? 'cyan' : 'default'} onClick={() => dispatch({ type: 'SET', patch: { guide: !s.guide } })} title="Free step-by-step walkthroughs for every mission"><Compass size={14} /> Lab Guide</Btn>
           <Btn onClick={() => dispatch({ type: 'SET', patch: { drawer: true } })}><Lightbulb size={14} className="text-amber-400" /> Field Guide</Btn>
           <Btn onClick={() => { if (window.confirm('Reset the simulation, XP and badges?')) dispatch({ type: 'RESET' }); }}><RotateCcw size={14} /> Reset Simulation</Btn>
         </div>
@@ -840,7 +1076,7 @@ function Sidebar({ s, dispatch }) {
         <h3 className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400"><Target size={13} /> Missions</h3>
         <div className="mb-3 grid grid-cols-3 gap-1">
           {MISSIONS.map((m) => (
-            <button key={m.id} onClick={() => dispatch({ type: 'SET', patch: { mission: m.id } })}
+            <button key={m.id} onClick={() => dispatch({ type: 'SET', patch: { mission: m.id, guideTab: m.id } })}
               className={`rounded-md border px-1 py-1.5 text-[11px] font-semibold transition ${s.mission === m.id ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300' : 'border-slate-700 text-slate-400 hover:text-slate-200'}`}>
               {s.missionsDone[m.id] ? '✓ ' : ''}M{m.id}
             </button>
@@ -849,6 +1085,7 @@ function Sidebar({ s, dispatch }) {
         <div key={mission.id} className="animate-fade-in">
           <div className="text-sm font-semibold text-white">{mission.title}</div>
           <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{mission.brief}</p>
+          <Btn variant="cyan" className="mt-2 w-full" onClick={() => dispatch({ type: 'SET', patch: { guide: true, guideTab: mission.id } })}><ListChecks size={13} /> Step-by-step walkthrough</Btn>
           <div className="my-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
             <div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: `${(done / mission.objectives.length) * 100}%` }} />
           </div>
@@ -1047,6 +1284,7 @@ function Inspector({ id, s, onClose }) {
   const info = NODE_INFO[id.startsWith('llm') ? 'llm' : id];
   const I = n.icon || Layers;
   const inFocus = MODULES[s.module - 1].focus.includes(id);
+  const comp = COMPONENTS[id.startsWith('llm') ? 'llm' : id];
   return (
     <div key={id} className="animate-fade-in mt-3 grid gap-3 rounded-xl border border-slate-700 bg-[#0b1120]/95 p-4 md:grid-cols-2">
       <div>
@@ -1059,7 +1297,15 @@ function Inspector({ id, s, onClose }) {
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={16} /></button>
         </div>
         {inFocus && <Pill color={C.crimson} className="mb-2">Module {s.module} focus</Pill>}
+        {comp && <p className="mb-2 rounded-md border border-cyan-500/30 bg-cyan-500/5 p-2 text-xs leading-relaxed text-slate-200"><span className="font-semibold text-cyan-300">In plain words: </span>{comp.plain}</p>}
         <p className="text-xs leading-relaxed text-slate-300">{info.role}</p>
+        {comp && (
+          <div className="mt-2 grid grid-cols-[70px_1fr] gap-y-1 text-[11px]">
+            <span className="text-slate-500">Receives</span><span className="text-slate-300">{comp.gets}</span>
+            <span className="text-slate-500">Sends</span><span className="text-slate-300">{comp.sends}</span>
+            <span className="text-slate-500">In the lab</span><span className="text-slate-300">{comp.lab}</span>
+          </div>
+        )}
         <div className="mt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Operational notes</div>
         <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-300">{info.ops.map((o) => <li key={o}>{o}</li>)}</ul>
       </div>
@@ -1502,6 +1748,209 @@ function RemediateTab({ s, dispatch }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Lab Guide panel + Component Guide view                              */
+/* ------------------------------------------------------------------ */
+const TAB_LABEL = Object.fromEntries(TABS.map((t) => [t.id, t.label]));
+
+function GuideStep({ n, step, s, dispatch, current }) {
+  const ok = step.done(s);
+  const [open, setOpen] = useState(false);
+  const show = current || open;
+  return (
+    <li className={`rounded-lg border p-2.5 transition ${current ? 'border-cyan-500/70 bg-cyan-500/5' : ok ? 'border-slate-800 bg-slate-900/30' : 'border-slate-800 bg-slate-900/60'}`}>
+      <button className="flex w-full items-start gap-2 text-left" onClick={() => setOpen(!open)}>
+        {ok ? <CheckCircle2 size={16} className="mt-px shrink-0 text-cyan-400" />
+          : <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${current ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-300'}`}>{n}</span>}
+        <span className={`flex-1 text-xs font-semibold ${ok ? 'text-slate-500' : 'text-slate-100'}`}>{step.title}</span>
+        {current && <Pill color={C.cyan}>you are here</Pill>}
+        {!current && <ChevronRight size={13} className={`mt-px shrink-0 text-slate-500 transition ${open ? 'rotate-90' : ''}`} />}
+      </button>
+      {show && (
+        <div className="animate-fade-in mt-2 space-y-2 pl-6 text-[11.5px] leading-relaxed">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">Where</span>
+            <span className="text-slate-300">{step.canvas ? 'Flow canvas' : `Console → ${TAB_LABEL[step.tab]}`}</span>
+            <Btn variant="cyan" className="ml-auto !px-2 !py-0.5" onClick={() => dispatch({ type: 'GOTO', tab: step.tab, canvas: step.canvas })}><MousePointerClick size={12} /> Take me there</Btn>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Do</div>
+            <ol className="mt-0.5 list-decimal space-y-0.5 pl-4 text-slate-200">{step.do.map((x) => <li key={x}>{x}</li>)}</ol>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">You should see</div>
+            <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-slate-300">{step.expect.map((x) => <li key={x}>{x}</li>)}</ul>
+          </div>
+          <p className="rounded-md border border-slate-800 bg-slate-950/60 p-1.5 text-slate-400"><span className="font-semibold text-amber-300">Why it matters: </span>{step.why}</p>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function GuideSteps({ steps, s, dispatch }) {
+  const cur = steps.findIndex((st) => !st.done(s));
+  return <ol className="space-y-2">{steps.map((st, i) => <GuideStep key={st.title} n={i + 1} step={st} s={s} dispatch={dispatch} current={i === cur} />)}</ol>;
+}
+
+function LabGuide({ s, dispatch }) {
+  const t = s.guideTab;
+  const tabs = [['start', 'Start'], [1, 'M1'], [2, 'M2'], [3, 'M3'], ['bonus', 'Bonus'], ['help', 'Fixes']];
+  const close = () => dispatch({ type: 'SET', patch: { guide: false } });
+  return (
+    <aside className="animate-slide-in fixed inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-slate-700 bg-[#0b1120] shadow-2xl xl:sticky xl:inset-auto xl:top-[76px] xl:z-auto xl:h-[calc(100vh-92px)] xl:w-auto xl:max-w-none xl:rounded-xl xl:border xl:border-slate-800 xl:shadow-none xl:animate-none">
+      <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2.5">
+        <Compass size={16} className="text-cyan-400" />
+        <div className="flex-1">
+          <div className="text-sm font-bold text-white">Lab Guide</div>
+          <div className="text-[10px] text-slate-500">Step-by-step walkthroughs · free, no XP cost</div>
+        </div>
+        <button onClick={close} className="text-slate-400 hover:text-white" title="Hide the Lab Guide"><PanelRightClose size={17} /></button>
+      </div>
+      <div className="flex gap-1 border-b border-slate-800 px-2 py-1.5">
+        {tabs.map(([id, label]) => {
+          const done = typeof id === 'number' && s.missionsDone[id];
+          return (
+            <button key={id} onClick={() => dispatch({ type: 'SET', patch: typeof id === 'number' ? { guideTab: id, mission: id } : { guideTab: id } })}
+              className={`flex-1 rounded-md px-1.5 py-1 text-[11px] font-semibold transition ${t === id ? 'bg-cyan-500/15 text-cyan-300' : 'text-slate-400 hover:text-slate-200'}`}>{done ? '✓ ' : ''}{label}</button>
+          );
+        })}
+      </div>
+      <div key={String(t)} className="animate-fade-in flex-1 overflow-y-auto p-3">
+        {t === 'start' && <GuideStart s={s} dispatch={dispatch} />}
+        {typeof t === 'number' && (() => {
+          const g = LAB_GUIDE[t];
+          const m = MISSIONS[t - 1];
+          const n = g.steps.filter((st) => st.done(s)).length;
+          return (
+            <>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">Mission {m.id}</div>
+              <div className="text-sm font-semibold text-white">{m.title}</div>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-slate-300"><span className="font-semibold text-cyan-300">Goal: </span>{g.goal}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-400"><span className="font-semibold text-slate-300">Before you start: </span>{g.before}</p>
+              <div className="my-2 flex items-center gap-2 text-[10px] text-slate-500">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-cyan-500 transition-all" style={{ width: `${(n / g.steps.length) * 100}%` }} /></div>
+                {n}/{g.steps.length} steps
+              </div>
+              <GuideSteps steps={g.steps} s={s} dispatch={dispatch} />
+              <div className={`mt-3 flex items-start gap-2 rounded-md border p-2 text-[11px] ${s.missionsDone[t] ? 'border-amber-500/50 bg-amber-500/10 text-amber-100' : 'border-slate-800 text-slate-400'}`}>
+                <Flag size={13} className="mt-px shrink-0" /><span>{g.result}</span>
+              </div>
+            </>
+          );
+        })()}
+        {t === 'bonus' && (
+          <>
+            <p className="mb-2 text-[11.5px] text-slate-400">Optional labs that deepen Modules 2, 3 and 4. Each can be done any time after Mission 1.</p>
+            <GuideSteps steps={BONUS_GUIDE} s={s} dispatch={dispatch} />
+          </>
+        )}
+        {t === 'help' && (
+          <>
+            <p className="mb-2 flex items-center gap-1.5 text-[11.5px] text-slate-400"><Wrench size={13} /> Stuck? Common causes and fixes.</p>
+            <ul className="space-y-2">
+              {TROUBLESHOOT.map(([q, a]) => (
+                <li key={q} className="rounded-md border border-slate-800 bg-slate-900/60 p-2 text-[11.5px]">
+                  <div className="font-semibold text-slate-100">{q}</div>
+                  <div className="mt-0.5 text-slate-400">{a}</div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function GuideStart({ s, dispatch }) {
+  const tour = [
+    ['Top bar (HUD)', 'Rank, XP, mastery and badges. Lab Guide toggles this panel; Field Guide holds reference pages that cost XP; Reset Simulation starts over.'],
+    ['Left: Skill Tree & Missions', 'Pick a module (each Boss Quiz unlocks the next) and a mission. The objectives tick themselves as you work.'],
+    ['Centre: Workbench', 'The flow canvas (click any box to inspect it) and the Console Lab, which simulates the F5 AI Security UI. Switch between Split, Architecture Flow, Console Lab and Component Guide.'],
+    ['Event log', 'At the bottom of the console. Read it after every click: it says what each prompt did and what to do next.'],
+  ];
+  const plan = [
+    ['Mission 1', 'Module 1', 'Deploy, connect a model, project, token, route the app'],
+    ['Mission 2', 'Modules 2–3', 'Audit, then Block PII and prompt injection'],
+    ['Mission 3', 'Module 4', 'Red Team, AI Remediate, deploy, re-test'],
+  ];
+  return (
+    <div className="space-y-3 text-[11.5px] leading-relaxed">
+      <p className="text-slate-300">You secure a customer support chatbot. Its prompts will go through F5 AI Guardrails, you will attack it with AI Red Team, and you will fix what you find with AI Remediate.</p>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">The screen</div>
+        <ul className="space-y-1.5">{tour.map(([k, v]) => <li key={k}><span className="font-semibold text-slate-100">{k}. </span><span className="text-slate-400">{v}</span></li>)}</ul>
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Recommended order</div>
+        <table className="w-full">
+          <tbody>{plan.map(([m, mod, d]) => <tr key={m} className="border-t border-slate-800 align-top"><td className="py-1 pr-2 font-semibold text-cyan-300">{m}</td><td className="py-1 pr-2 text-slate-400">{mod}</td><td className="py-1 text-slate-300">{d}</td></tr>)}</tbody>
+        </table>
+        <p className="mt-1 text-slate-500">Each mission builds on the state left by the previous one, so play them in order. Take a module's Boss Quiz once you have done its mission.</p>
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Packet colours</div>
+        <div className="flex flex-wrap gap-2 text-[10.5px] text-slate-400">
+          {[[C.cyan, 'clean prompt'], [C.amber, 'attack / flagged'], [C.rose, 'PII'], [C.violet, 'Red Team / agent'], [C.crimson, 'blocked / remediation']].map(([c, x]) => <span key={x} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: c }} />{x}</span>)}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn variant="primary" onClick={() => dispatch({ type: 'SET', patch: { guideTab: 1, mission: 1 } })}><Play size={12} /> Start Mission 1</Btn>
+        <Btn onClick={() => dispatch({ type: 'VIEW', view: 'components' })}><Route size={12} /> What does each component do?</Btn>
+      </div>
+      <p className="flex items-start gap-1.5 text-[10.5px] text-slate-500"><Info size={12} className="mt-0.5 shrink-0" /> Product behaviour follows the F5 AI Security docs. Hostnames, prompts, model answers, success rates, CASI values and timings are simulated.</p>
+    </div>
+  );
+}
+
+function ComponentGuide({ s, dispatch }) {
+  const show = (node) => { dispatch({ type: 'VIEW', view: 'split' }); dispatch({ type: 'INSPECT', id: node }); };
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+        <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400"><Route size={13} /> Follow one request end to end</div>
+        <ol className="grid gap-2 md:grid-cols-2">
+          {JOURNEY.map(([id, text], i) => (
+            <li key={id} className="flex gap-2 rounded-lg border border-slate-800 bg-slate-900/50 p-2 text-xs leading-relaxed">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#e4002b]/20 text-[10px] font-bold text-[#ff4d6d]">{i + 1}</span>
+              <span className="text-slate-300"><button className="font-semibold text-cyan-300 hover:underline" onClick={() => show(COMPONENTS[id].node)}>{COMPONENTS[id].name}.</button> {text}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+      {COMPONENT_GROUPS.map((g) => (
+        <section key={g.title}>
+          <h3 className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest" style={{ color: g.color }}><span className="h-2 w-2 rounded-full" style={{ background: g.color }} />{g.title}</h3>
+          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {g.ids.map((id) => {
+              const c = COMPONENTS[id];
+              const info = NODE_INFO[id];
+              const seen = s.inspected[id];
+              return (
+                <article key={id} className="flex flex-col rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <div className="mb-1 flex items-start gap-2">
+                    <div className="flex-1 text-sm font-semibold text-white">{c.name}</div>
+                    {seen && <Pill color={C.cyan}>inspected</Pill>}
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-300">{c.plain}</p>
+                  <div className="mt-2 grid grid-cols-[70px_1fr] gap-y-1 text-[11px]">
+                    <span className="text-slate-500">Receives</span><span className="text-slate-300">{c.gets}</span>
+                    <span className="text-slate-500">Sends</span><span className="text-slate-300">{c.sends}</span>
+                    {info && <><span className="text-slate-500">Ports</span><span className="font-mono text-[10.5px] text-cyan-300">{info.ports.map(([p]) => p).join(' · ')}</span></>}
+                  </div>
+                  <p className="mt-2 rounded-md border border-slate-800 bg-slate-950/60 p-1.5 text-[11px] text-slate-400"><span className="font-semibold text-amber-300">In the lab: </span>{c.lab}</p>
+                  <div className="mt-auto pt-2"><Btn variant="ghost" className="!px-0" onClick={() => show(c.node)}><Eye size={12} /> Show on canvas</Btn></div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function EventLog({ events }) {
   const color = { info: 'text-slate-400', ok: 'text-cyan-300', warn: 'text-amber-300', block: 'text-rose-400', leak: 'text-fuchsia-300' };
   const ref = React.useRef(null);
@@ -1673,6 +2122,7 @@ export default function AISecuritySimulator() {
     { id: 'split', label: 'Split Workbench', icon: Columns2 },
     { id: 'flow', label: 'Architecture Flow', icon: Workflow },
     { id: 'console', label: 'Console Lab', icon: Terminal },
+    { id: 'components', label: 'Component Guide', icon: Route },
   ], []);
 
   const flowPanel = (
@@ -1690,7 +2140,7 @@ export default function AISecuritySimulator() {
   return (
     <div className="min-h-screen bg-[#0b1120] text-slate-200" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif' }}>
       <HUD s={s} dispatch={dispatch} />
-      <main className="mx-auto grid max-w-[1600px] gap-4 px-4 py-4 lg:grid-cols-[280px_1fr]">
+      <main className={`mx-auto grid gap-4 px-4 py-4 lg:grid-cols-[280px_minmax(0,1fr)] ${s.guide ? 'max-w-[1960px] xl:grid-cols-[260px_minmax(0,1fr)_380px]' : 'max-w-[1600px]'}`}>
         <Sidebar s={s} dispatch={dispatch} />
         <div className="min-w-0 space-y-4">
           <section key={mod.id} className="animate-fade-in rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 to-[#0b1120] p-4">
@@ -1703,9 +2153,9 @@ export default function AISecuritySimulator() {
               <div className="flex flex-wrap gap-2">
                 <div className="flex rounded-lg border border-slate-700 p-0.5">
                   {views.map((v) => (
-                    <button key={v.id} onClick={() => dispatch({ type: 'VIEW', view: v.id })}
+                    <button key={v.id} title={v.label} onClick={() => dispatch({ type: 'VIEW', view: v.id })}
                       className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${s.view === v.id ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>
-                      <v.icon size={13} /> <span className="hidden sm:inline">{v.label}</span>
+                      <v.icon size={13} /> <span className={s.guide ? 'hidden 2xl:inline' : 'hidden sm:inline'}>{v.label}</span>
                     </button>
                   ))}
                 </div>
@@ -1721,6 +2171,7 @@ export default function AISecuritySimulator() {
             {s.view === 'split' && <div className="grid gap-4 min-[1900px]:grid-cols-[1.2fr_1fr]">{flowPanel}{consolePanel}</div>}
             {s.view === 'flow' && flowPanel}
             {s.view === 'console' && consolePanel}
+            {s.view === 'components' && <ComponentGuide s={s} dispatch={dispatch} />}
           </div>
 
           <footer className="pb-6 text-[10.5px] leading-relaxed text-slate-500">
@@ -1730,6 +2181,7 @@ export default function AISecuritySimulator() {
             CASI values, token counts and timings are simulated. The docs give no CASI range or formula, no redact action, and no BIG-IP or NGINX enforcement integration for AI Security.
           </footer>
         </div>
+        {s.guide && <LabGuide s={s} dispatch={dispatch} />}
       </main>
 
       {s.drawer && <FieldGuide s={s} dispatch={dispatch} />}

@@ -65,6 +65,7 @@ Product behaviour follows the **F5 API Security Local Edition 1.2.6** docs on cl
 | Console lab | Setup & Connect (SaaS us1/eu1 or self-hosted readiness check, Connections > Models > Test and connect, Guardrails vs Red Team project, token scopes, OpenAI SDK base URL), Prompt Traffic replay, Guardrails (Enable, Scan direction, Block/Audit, Enforce, Comprehensive/Performance, custom GenAI/regex/keyword builder), Prompt Logs & Agents (outcome filters, request vs response scan detail, agentic fingerprints, dashboard), AI Red Team (All Attacks, custom-intent campaign, reports, refusal phrases), AI Remediate (request → Ready → import/deploy in Audit → Block → rerun) |
 | Missions | 1 Onboard a Guarded Support Chatbot · 2 Stop the PII & Prompt-Injection Leak · 3 Red Team → Remediate → Re-test, plus 4 lab-bonus objectives |
 | Field Guide | 10 pages that cost XP to open, each citing its docs page |
+| Lab Guide & Component Guide | Same as APIsec LE: a free Lab Guide panel with step-by-step walkthroughs for Missions 1–3 and 4 bonus labs, a getting-started tour and troubleshooting; a Component Guide view explaining every component plus a one-prompt end-to-end walkthrough. Full text: [`docs/ai-security-lab-guide.md`](docs/ai-security-lab-guide.md) |
 
 ## Accuracy (AI Security)
 
