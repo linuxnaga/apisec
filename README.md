@@ -37,6 +37,16 @@ npm run preview  # serves dist/ on http://localhost:5281
 | Console lab | Deploy & Sign-in (Compose/Helm, admin/admin change, decoupled licensing), BIG-IP Integration wizard, Traffic Replay + Analyze Now + fast-forward, API Inventory (dashboard tiles, filters, batch Approve/Reject/Block, View selected API, Discovery Rules, Dynamic Path Templates), Schema (OAS) baseline + exports, Enforcement (Management Connectivity, Block via iControl REST, HTTP/HTTPS known issue) |
 | Missions | 1 Zero-Latency Air-Gapped Onboarding · 2 Hunting the Shadow PII Leak · 3 Closing the Loop with BIG-IP AWAF Enforcement. Objectives tick off automatically. There are also 3 lab-bonus objectives |
 | Field Guide | 9 pages that cost XP to open. Each one cites its doc page |
+| Lab Guide | Free side panel with step-by-step walkthroughs for each mission and bonus lab: where to go, what to click, what you should see and why it matters. Steps tick off automatically and **Take me there** opens the right tab. Also a getting-started tour and a troubleshooting page |
+| Component Guide | A view (next to Split / Flow / Console) that explains every component in plain words: what it receives and sends, its ports, and how to use it in the lab, plus an 8-step "one request end to end" walkthrough. Inspector cards on the canvas show the same summary |
+
+## Lab walkthroughs and component reference
+
+The full step-by-step instructions for all three missions, the bonus labs, troubleshooting, and a table of what each component does are in [`docs/apisec-le-lab-guide.md`](docs/apisec-le-lab-guide.md). In short:
+
+1. **Mission 1:** Deploy & Sign-in → sign in and change password → licensing check → click the five telemetry-chain nodes → BIG-IP Integration wizard (VS mode API Security) → Replay normal traffic → Analyze Now.
+2. **Mission 2:** Replay shadow debug calls → Analyze Now → filter shadow → open the High-risk SSN endpoint → Upload Schema → approve 3 documented endpoints → fast-forward 30 days → retire the legacy-auth zombie.
+3. **Mission 3:** Test Management Connectivity → Block debug/users (fails: HTTP/HTTPS known issue) → switch to a Fundamental-template policy → Block again → replay the attack and watch it stop at the WAF → export a report.
 
 ## Accuracy
 
@@ -55,6 +65,7 @@ Product behaviour follows the **F5 API Security Local Edition 1.2.6** docs on cl
 | Console lab | Setup & Connect (SaaS us1/eu1 or self-hosted readiness check, Connections > Models > Test and connect, Guardrails vs Red Team project, token scopes, OpenAI SDK base URL), Prompt Traffic replay, Guardrails (Enable, Scan direction, Block/Audit, Enforce, Comprehensive/Performance, custom GenAI/regex/keyword builder), Prompt Logs & Agents (outcome filters, request vs response scan detail, agentic fingerprints, dashboard), AI Red Team (All Attacks, custom-intent campaign, reports, refusal phrases), AI Remediate (request → Ready → import/deploy in Audit → Block → rerun) |
 | Missions | 1 Onboard a Guarded Support Chatbot · 2 Stop the PII & Prompt-Injection Leak · 3 Red Team → Remediate → Re-test, plus 4 lab-bonus objectives |
 | Field Guide | 10 pages that cost XP to open, each citing its docs page |
+| Lab Guide & Component Guide | Same as APIsec LE: a free Lab Guide panel with step-by-step walkthroughs for Missions 1–3 and 4 bonus labs, a getting-started tour and troubleshooting; a Component Guide view explaining every component plus a one-prompt end-to-end walkthrough. Full text: [`docs/ai-security-lab-guide.md`](docs/ai-security-lab-guide.md) |
 
 ## Accuracy (AI Security)
 

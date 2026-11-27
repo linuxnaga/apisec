@@ -18,6 +18,7 @@ import {
   Gauge, Ghost, GitCompare, KeyRound, Layers, Lightbulb, Lock, Monitor, Network, Play, Radio,
   RotateCcw, Server, Shield, ShieldAlert, ShieldCheck, Skull, Sparkles, Swords, Tag, Target,
   Terminal, Timer, Trophy, Unlock, Upload, Users, Workflow, X, Zap, Columns2, Send,
+  Compass, ListChecks, MousePointerClick, Wrench, Flag, Info, Route, PanelRightClose,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -330,11 +331,250 @@ const NODE_INFO = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Component Guide: what each piece does, in plain language            */
+/* ------------------------------------------------------------------ */
+// Facts restate NODE_INFO / FIELD_GUIDE (F5 APIsec LE 1.2.6 docs). `node` = the canvas node to show.
+const COMPONENTS = {
+  clients: { name: 'API Clients', node: 'clients',
+    plain: 'Anyone calling the API: browsers, mobile apps, partner integrations. In this lab they include normal customers, a forgotten debug caller and old v0 mobile builds.',
+    gets: 'API responses, always from BIG-IP', sends: 'HTTPS requests to the BIG-IP API virtual server (TCP 443)',
+    lab: 'Every Traffic Replay burst starts here. Clients never talk to APIsec LE.' },
+  vs: { name: 'BIG-IP API Virtual Server', node: 'vs',
+    plain: 'The front door that already exists on BIG-IP. It load-balances API requests to the backends. When you set its mode to API Security, the telemetry iRule is attached so every request is also described out-of-band.',
+    gets: 'Client HTTPS requests', sends: 'Requests to the backends (through the WAF policy) and request metadata to the Internal Logging Pool',
+    lab: 'BIG-IP Integration → Virtual server mode. "None" means no telemetry at all; "Advanced API Security" adds ASM inspection plus an HSL profile.' },
+  irule: { name: 'iRule telemetry forwarder', node: 'vs',
+    plain: 'A small BIG-IP script attached to the API virtual server. For each request it hands a copy of the HTTP metadata to the Internal Logging Pool using high-speed logging (HSL). The request itself carries on untouched, so no proxy is inserted and no latency is added.',
+    gets: 'Each request handled by the API VS', sends: 'HTTP metadata to the Internal Logging Pool',
+    lab: 'Created for you by "Apply device settings". The Manual equivalent card shows the same chain by hand. The iRule body and exact field list are in the in-product Integration Guide, not the web docs.' },
+  awaf: { name: 'Advanced WAF policy', node: 'awaf',
+    plain: 'The BIG-IP Advanced WAF (ASM) policy on the API virtual server. It is the only place in the whole solution where traffic is blocked. APIsec LE writes block entries into it; BIG-IP enforces them inline.',
+    gets: 'Requests from the VS, and policy updates from APIsec LE over iControl REST', sends: 'Allowed requests to the backends, 403s for blocked endpoints',
+    lab: 'Mission 3. Needs Advanced WAF/ASM 15.1+. The policy must differentiate HTTP and HTTPS or a Block fails (known issue).' },
+  svc: { name: 'Backend microservices', node: 'svc0',
+    plain: 'users-svc, orders-svc and auth-svc: the real applications. APIsec LE never touches them. It only learns about them from the traffic BIG-IP describes.',
+    gets: 'Whatever BIG-IP allows through', sends: 'Responses, which may contain sensitive data such as SSNs',
+    lab: 'Packets that reach these boxes were allowed. Blocked ones stop at the WAF with a red ripple.' },
+  logpool: { name: 'Internal Logging Pool', node: 'logpool',
+    plain: 'A BIG-IP pool that exists so the iRule has a named place to log to. Its only member is the Internal Logging Virtual Server.',
+    gets: 'Metadata from the iRule', sends: 'Metadata to the Internal Logging VS',
+    lab: 'Dimmed until you Apply device settings. If ingestion stalls, check the iRule references this pool by name.' },
+  logvs: { name: 'Internal Logging Virtual Server', node: 'logvs',
+    plain: 'An internal BIG-IP virtual server on 6514. Its job is to wrap the metadata stream in TLS (serverssl profile) before it leaves BIG-IP.',
+    gets: 'Metadata from the Internal Logging Pool', sends: 'TLS-encrypted metadata to the External Collector Pool',
+    lab: 'A missing serverssl profile is a documented reason for the ingestion counter not increasing.' },
+  colpool: { name: 'External Collector Pool', node: 'colpool',
+    plain: 'A BIG-IP pool whose members are the APIsec LE Collector address(es) on TCP 6514. This is the point where the stream leaves BIG-IP.',
+    gets: 'TLS metadata from the Internal Logging VS', sends: 'HSL over TLS to the Collector on TCP 6514',
+    lab: 'Firewalls between BIG-IP and APIsec LE must allow 6514.' },
+  collector: { name: 'Collector', node: 'collector',
+    plain: 'The intake of APIsec LE. It listens on TCP 6514, receives the metadata stream from BIG-IP and holds the records until the Analysis Engine processes them.',
+    gets: 'HSL-over-TLS metadata from BIG-IP (TCP 6514, required)', sends: 'Records to the Analysis Engine',
+    lab: 'The "N QUEUED" badge on the canvas shows records waiting for Analyze Now.' },
+  discovery: { name: 'Analysis Engine (discovery)', node: 'discovery',
+    plain: 'Turns raw request records into an API inventory. It groups traffic into domains by Host header, rebuilds endpoints, collapses IDs into $DYN$ (so /users/123 and /users/456 become one endpoint) and applies your Discovery Rules and Dynamic Path Templates.',
+    gets: 'Records from the Collector', sends: 'Endpoints to Risk scoring and the Data Store',
+    lab: 'Analyze Now runs a cycle on demand. API Inventory → Discovery tuning holds the rules and templates.' },
+  risk: { name: 'Risk scoring & sensitive data', node: 'risk',
+    plain: 'Scores every endpoint 0–100 (Low 0–39, Medium 40–69, High 70–100) and flags sensitive data such as SSN, Date of Birth, Email or Credit Card. The score tells you what to triage first.',
+    gets: 'Endpoints from the Analysis Engine', sends: 'Scores and findings to the Data Store and Web UI',
+    lab: 'API Inventory → click a row → View selected API lists the factors. The factors come from the docs; the weights in this lab are invented.' },
+  schema: { name: 'Schema baseline (OpenAPI)', node: 'schema',
+    plain: 'Holds the OpenAPI file you upload for a domain. It is the yardstick for "documented": anything seen in traffic but not in the schema stays flagged as shadow.',
+    gets: 'An OpenAPI file uploaded in the Web UI', sends: 'Baseline status to the inventory',
+    lab: 'Schema (OAS) → Upload Schema, then Review comparison. There is no separate diff screen in the product.' },
+  datastore: { name: 'Data Store', node: 'datastore',
+    plain: 'Where everything APIsec LE learns is kept, on the local host: endpoints, statistics, audit records and configuration. Exports are produced from here.',
+    gets: 'Endpoints, scores, settings', sends: 'Exports (JSON, PDF, HTML, CSV) and data for the Web UI',
+    lab: 'Schema (OAS) → Export. ./install_local.sh --purge would permanently delete this data.' },
+  ui: { name: 'Web UI (local console)', node: 'ui',
+    plain: 'The console you open in a browser at https://<host>:8000. Dashboard, per-domain inventory, schema upload, blocking, exports and System settings (users, license).',
+    gets: 'Your browser on TCP 8000 (HTTPS)', sends: 'Your decisions: approve, block, upload, export',
+    lab: 'The Console Lab panel simulates it. First login is admin/admin and must be changed. Roles: Admin, Maintainer, Viewer.' },
+  enforce: { name: 'Management Connector', node: 'enforce',
+    plain: 'The only component that talks back to BIG-IP. When you click Block it calls iControl REST on the BIG-IP management address (TCP 443) to update the WAF policy. Discovery works without it.',
+    gets: 'Block actions from the Web UI', sends: 'WAF policy updates to BIG-IP management (TCP 443)',
+    lab: 'Enforcement → Test Management Connectivity, then Block. Watch the red packet travel up to the WAF.' },
+  mgmt: { name: 'BIG-IP management plane', node: 'mgmt',
+    plain: 'BIG-IP\'s management interface, separate from the data path. APIsec LE registers the device here and checks two statuses: Discovered and Management Connectivity. Both must succeed before enforcement works.',
+    gets: 'iControl REST calls from the Management Connector', sends: 'Configuration changes to the WAF policy',
+    lab: 'BIG-IP Integration → Add BIG-IP. The MGMT ✓ badge appears after the connectivity test.' },
+  license: { name: 'License (decoupled)', node: 'license',
+    plain: 'Licensing inside APIsec LE (System > License). It is decoupled so the host never needs internet: upload the JWT, Register Device, download report.json, bring back signed_ack.json, Activate.',
+    gets: 'JWT and signed_ack.json, carried in by the operator', sends: 'report.json, carried out by the operator',
+    lab: 'Deploy & Sign-in → Decoupled licensing. A 14-day Evaluation Mode also exists.' },
+  workstation: { name: 'Operator workstation', node: 'workstation',
+    plain: 'Any operator machine that has internet access. Its only job is to carry report.json to F5 and bring the Signed ACK back. Nothing else in the solution needs internet.',
+    gets: 'report.json from APIsec LE', sends: 'signed_ack.json back to APIsec LE',
+    lab: 'Do license step 2 and watch the amber packet move to Operator PC.' },
+  deploy: { name: 'Deployment platform (Docker Compose or Kubernetes/Helm)', node: 'ui',
+    plain: 'APIsec LE ships as containers you run on your own infrastructure. Everything in the cyan zone of the canvas runs here, with no dependency on F5 cloud. Docker Compose suits a single host, lab or proof-of-concept; Kubernetes with Helm suits production, high availability and multi-node.',
+    gets: 'The install package', sends: 'Nothing outbound: normal operation needs no internet',
+    lab: 'Deploy & Sign-in. Docker Engine 20.10+ with Compose 2.0+, or Kubernetes 1.26+ with Helm 3.10+; Bash 4+ for ./install_local.sh --default. The docs publish no sizing figures.' },
+};
+const COMPONENT_GROUPS = [
+  { title: 'Data path on BIG-IP (inline)', color: C.crimson, ids: ['clients', 'vs', 'irule', 'awaf', 'svc'] },
+  { title: 'Telemetry chain (out-of-band, BIG-IP → APIsec LE)', color: C.cyan, ids: ['logpool', 'logvs', 'colpool', 'collector'] },
+  { title: 'APIsec LE stack (local Docker / Kubernetes)', color: C.cyan, ids: ['deploy', 'discovery', 'risk', 'schema', 'datastore', 'ui'] },
+  { title: 'Enforcement & licensing', color: C.amber, ids: ['enforce', 'mgmt', 'license', 'workstation'] },
+];
+const JOURNEY = [
+  ['clients', 'A client sends an HTTPS request to the BIG-IP API virtual server on TCP 443.'],
+  ['awaf', 'The Advanced WAF policy checks it. An endpoint you have blocked gets a 403 here, at the edge.'],
+  ['svc', 'Allowed requests reach the backend and the response returns through BIG-IP as usual.'],
+  ['irule', 'For each request, the iRule on the VS copies the HTTP metadata to the Internal Logging Pool → Internal Logging VS (adds TLS) → External Collector Pool. The client is not delayed.'],
+  ['collector', 'The Collector receives the stream on TCP 6514 and queues the records.'],
+  ['discovery', 'The Analysis Engine (Analyze Now) rebuilds endpoints; Risk scoring rates them and flags sensitive data; results land in the Data Store.'],
+  ['ui', 'You review them in the Web UI on TCP 8000, compare with the uploaded schema, and approve, retire or block.'],
+  ['enforce', 'A Block goes out through the Management Connector → BIG-IP iControl REST (TCP 443) → WAF policy. Step 2 now stops that endpoint.'],
+];
+
+/* ------------------------------------------------------------------ */
+/* Lab Guide: step-by-step walkthroughs                                */
+/* ------------------------------------------------------------------ */
+// Each step: where to go, what to click, what you should see, why it matters.
+// `tab` = console tab to open, `canvas` = the step happens on the flow canvas, `done` = auto-tick.
+const epBy = (s, pred) => Object.values(s.endpoints).some(pred);
+const LAB_GUIDE = {
+  1: {
+    goal: 'Install APIsec LE on a local, air-gapped host, connect BIG-IP so it streams request metadata out-of-band, and discover your first endpoints.',
+    before: 'Nothing. Start here after a Reset Simulation.',
+    steps: [
+      { title: 'Deploy APIsec LE locally', tab: 'deploy', done: (s) => s.deploy.status === 'running',
+        do: ['Open the Deploy & Sign-in tab.', 'Pick Docker Compose (single host, lab) or Kubernetes (Helm) (production, HA).', 'Click Deploy locally.'],
+        expect: ['The event log prints the install commands, then "APIsec LE running with no outbound internet".', 'The cyan APIsec LE zone on the canvas stops being dimmed and the console pill reads "online · air-gapped".'],
+        why: 'Every APIsec LE component (Collector, Analysis Engine, Data Store, Web UI, Management Connector) runs on your own host. Nothing depends on F5 cloud.' },
+      { title: 'Sign in and change the default password', tab: 'deploy', done: (s) => s.login === 2,
+        do: ['In "2 · First sign-in", click Sign in (admin / admin).', 'Click Change password.'],
+        expect: ['Both lines tick and the log suggests creating a Recovery Key under System > Users.'],
+        why: 'The product forces a password change on first login. A Recovery Key is your way back in if the admin password is lost.' },
+      { title: 'Answer the licensing check', tab: 'deploy', done: (s) => !!s.objectives.license,
+        do: ['Optional: in "3 · Decoupled licensing", click Do it on each of the three steps and watch the amber packet move to Operator PC.', 'In the Licensing check, choose the task that needs an internet-connected machine.'],
+        expect: ['The right answer turns cyan and the log explains the decoupled model. A wrong answer costs 5 XP.'],
+        why: 'Only the license report exchange needs internet, and it goes through an operator workstation. Discovery and enforcement are entirely local.' },
+      { title: 'Trace the telemetry chain on the canvas', canvas: true, done: (s) => CHAIN.every((k) => s.inspected[k]),
+        do: ['On the flow canvas, click these five nodes: API Virtual Server, Int. Logging Pool, Int. Logging VS, Ext. Collector Pool, Collector.', 'Read each inspector card. The middle three are dimmed until step 5, but you can still click them.'],
+        expect: ['Each node gets a small cyan dot and you earn +5 XP the first time.', 'The objective ticks once all five are inspected.'],
+        why: 'This is the exact path request metadata takes from BIG-IP to APIsec LE. Knowing it is how you troubleshoot "ingestion not increasing".' },
+      { title: 'Run the BIG-IP integration wizard', tab: 'bigip', done: (s) => !!s.objectives.integrate,
+        do: ['Open BIG-IP Integration.', 'Click Add BIG-IP.', 'Click Connect → Collector :6514 → Apply device settings.', 'Under Virtual server mode, choose API Security.'],
+        expect: ['The device row shows Discovered ✓ and Management Connectivity ✓.', 'The logging pool and VS nodes light up, the VS gets an "API SEC" badge, and the 6514 line turns cyan.'],
+        why: 'Apply device settings creates the logging pools, the TLS logging VS, the log profile and the iRule. Choosing a VS mode attaches telemetry to that VS. "None" sends nothing.' },
+      { title: 'Replay normal traffic', tab: 'traffic', done: (s) => !!s.objectives['replay:normal'],
+        do: ['Open Traffic Replay.', 'Click Normal users.'],
+        expect: ['Cyan packets travel Clients → BIG-IP → backends. Smaller packets branch down the dashed TCP 6514 line to the Collector.', 'The Collector shows "9 QUEUED" and "Inline latency added" stays at 0 ms.'],
+        why: 'This proves discovery is out-of-band: BIG-IP serves the request normally and streams a description of it on the side.' },
+      { title: 'Analyze Now', tab: 'traffic', done: (s) => !!s.objectives.analyze,
+        do: ['Click Analyze Now.'],
+        expect: ['A packet moves Collector → Analysis Engine → Risk. The log lists the new endpoints and the Analysis Engine shows an EPS badge.', 'Open API Inventory to see them. Order IDs appear as separate rows for now (the Module 2 bonus fixes that).'],
+        why: 'The Analysis Engine rebuilds endpoints from the metadata and normalizes IDs to $DYN$.' },
+    ],
+    result: 'Mission 1 complete: +75 XP and the Out-of-Band Discovery badge. Take the Module 1 Boss Quiz to unlock Module 2.',
+  },
+  2: {
+    goal: 'Find the undocumented endpoint that leaks SSNs, prove it is not in the OpenAPI schema, approve the legitimate APIs, and catch the zombie that went quiet.',
+    before: 'Mission 1 done (APIsec LE running, BIG-IP integrated, normal traffic analyzed). The zombie step needs legacy-auth to have been seen in normal traffic first.',
+    steps: [
+      { title: 'Replay the shadow debug calls', tab: 'traffic', done: (s) => !!s.objectives['replay:shadow'],
+        do: ['Traffic Replay → Shadow debug calls.', 'Optional: also click PII-leaking responses to see a documented endpoint over-share.'],
+        expect: ['Amber packets reach users-svc. The log shows GET /api/v1/debug/users with no auth.'],
+        why: 'Nobody documented this endpoint, but it is live and BIG-IP is happily serving it.' },
+      { title: 'Analyze Now', tab: 'traffic', done: (s) => epBy(s, (e) => e.base === 'GET /api/v1/debug/users' && e.hits > 0),
+        do: ['Click Analyze Now.'],
+        expect: ['The log lists GET /api/v1/debug/users as new.'],
+        why: 'Discovery only shows what the Analysis Engine has processed.' },
+      { title: 'Filter by Status = shadow', tab: 'inventory', done: (s) => !!s.objectives['filter-shadow'],
+        do: ['Open API Inventory.', 'Set the Status filter to shadow.'],
+        expect: ['Right now every endpoint shows shadow. That is expected: nothing is documented (no schema) or approved (Inventory) yet.'],
+        why: 'Shadow means undocumented or unmanaged. The next steps shrink this list to the real problem.' },
+      { title: 'Open the high-risk endpoint', tab: 'inventory', done: (s) => !!s.objectives['view-high'],
+        do: ['Click the GET /api/v1/debug/users row (red High pill, SSN tag).'],
+        expect: ['View selected API opens: Authentication "none observed", sensitive data SSN, Date of Birth, Email in the response, and the risk factors that add up to High.'],
+        why: 'The docs say to triage High first, especially shadow and unauthenticated endpoints that return sensitive data.' },
+      { title: 'Upload the OpenAPI schema', tab: 'schema', done: (s) => !!s.objectives['upload-schema'],
+        do: ['Open Schema (OAS).', 'Click Upload Schema.', 'Optional bonus: click Review comparison.'],
+        expect: ['The log lists what is not in the schema: GET /api/v1/debug/users and GET /health (unless you already marked /health NON-API).', 'Documented endpoints change from shadow to in-schema. The Schema Baseline node gets a BASELINE badge.'],
+        why: 'The schema is the yardstick for "documented". debug/users is still shadow, which proves it is undocumented.' },
+      { title: 'Move 3 legitimate endpoints to Inventory', tab: 'inventory', done: (s) => !!s.objectives.promote3,
+        do: ['In API Inventory, tick three documented endpoints, for example GET /api/v1/users/$DYN$, POST /api/v1/orders and POST /api/v1/auth/token.', 'Click Approve (Move to Inventory).'],
+        expect: ['Their status becomes inventory (cyan).', 'Do not approve GET /api/v1/debug/users: the governance check costs 10 XP.'],
+        why: 'Move to Inventory is how you approve an endpoint as managed. Only approved endpoints go into a schema export.' },
+      { title: 'Fast-forward 30 days', tab: 'traffic', done: (s) => !!s.objectives.zombie || epBy(s, (e) => e.kind === 'legacy' && e.status === 'zombie'),
+        do: ['Traffic Replay → Fast-forward 30 days.'],
+        expect: ['The log reports a zombie: POST /api/v0/legacy-auth. The Zombie APIs tile in API Inventory shows 1.'],
+        why: 'A zombie is an endpoint with no traffic for an extended period. The docs do not give a number; this lab uses 30 days.' },
+      { title: 'Record a retire decision for the zombie', tab: 'inventory', done: (s) => !!s.objectives.zombie,
+        do: ['In API Inventory, click POST /api/v0/legacy-auth (violet "zombie", old Last Updated).', 'Click Record retire decision.'],
+        expect: ['The log records the decision with the API owner.'],
+        why: 'A quiet, unauthenticated login endpoint is attack surface nobody watches. Retiring it is a governance decision, not an automatic action.' },
+    ],
+    result: 'Mission 2 complete: +75 XP and the Shadow/Zombie Hunter badge. Modules 2 and 3 cover this material; take their Boss Quizzes.',
+  },
+  3: {
+    goal: 'Have APIsec LE update the BIG-IP WAF policy so BIG-IP blocks the shadow endpoint at the edge, then export a record for the audit.',
+    before: 'Missions 1 and 2 done. GET /api/v1/debug/users must be discovered and still shadow (not deleted).',
+    steps: [
+      { title: 'Test Management Connectivity', tab: 'enforce', done: (s) => !!s.objectives.mgmt,
+        do: ['Open Enforcement.', 'Click Test Management Connectivity.'],
+        expect: ['Both device statuses tick and the BIG-IP Mgmt node shows "MGMT ✓".'],
+        why: 'Enforcement needs the Management Connector to reach BIG-IP management on TCP 443 (iControl REST). Discovery does not.' },
+      { title: 'Try to block the shadow endpoint', tab: 'enforce', done: (s) => !!s.objectives['block-fail'],
+        do: ['Find the GET /api/v1/debug/users row. The list also shows other shadow or zombie endpoints such as GET /health; leave those alone.', 'Click its Block (push to BIG-IP WAF policy) and read the confirmation, then click Block.'],
+        expect: ['A red packet travels Mgmt Connector → BIG-IP Mgmt → WAF policy, then the log says the block failed.', 'A red "Known issue hit" box appears.'],
+        why: 'This failure is deliberate. A block creates two entries, HTTP and HTTPS, and fails if the policy does not differentiate schemes (documented known issue).' },
+      { title: 'Apply the documented workaround', tab: 'enforce', done: (s) => !!s.objectives.scheme,
+        do: ['In the Known issue box, click Switch to a Fundamental-template policy.'],
+        expect: ['The prerequisites card shows "WAF policy differentiates HTTP and HTTPS".'],
+        why: 'Enable scheme differentiation, or use a policy built on the Fundamental template.' },
+      { title: 'Block it again', tab: 'enforce', done: (s) => !!s.objectives['block-shadow'],
+        do: ['Click Block on the GET /api/v1/debug/users row again and confirm.'],
+        expect: ['About two seconds of "Management Connector → iControl REST…", then the endpoint shows "blocked by BIG-IP" and the WAF node gets a BLOCKING badge.', 'Blocking a valid endpoint costs 10 XP, because real customers would get 403s.'],
+        why: 'APIsec LE never blocks traffic itself. It changes the WAF policy; BIG-IP enforces.' },
+      { title: 'Replay the attack', tab: 'traffic', done: (s) => !!s.objectives['verify-block'],
+        do: ['Traffic Replay → Shadow debug calls.'],
+        expect: ['Crimson packets stop at the WAF policy with a red ripple. The log shows "403 BLOCKED by BIG-IP WAF policy" and the Blocked counter rises.'],
+        why: 'This closes the loop: discovered out-of-band, decided in APIsec LE, enforced inline on BIG-IP.' },
+      { title: 'Export a report for the audit', tab: 'schema', done: (s) => !!s.objectives.export,
+        do: ['Open Schema (OAS) → Export.', 'Pick a format (JSON, PDF, HTML or CSV) and click Export inventory or Export All.'],
+        expect: ['A violet packet moves Data Store → Web UI and the log confirms the export.'],
+        why: 'Exports are the documented way to hand evidence to auditors. A schema export includes only endpoints in Inventory.' },
+    ],
+    result: 'Mission 3 complete: +75 XP and the AWAF Enforcement badge. If you also uploaded the schema and reviewed the comparison, you hold the OAS Schema Governance badge. Take the Module 4 Boss Quiz.',
+  },
+};
+const BONUS_GUIDE = [
+  { title: 'Group order IDs with a Dynamic Path Template', tab: 'inventory', done: (s) => !!s.objectives.template,
+    do: ['Replay Normal users and Analyze Now first, so order IDs like ORD-88121 appear as separate rows.', 'API Inventory → Discovery tuning → Add template (/api/v1/orders/*).'],
+    expect: ['The separate order rows merge into GET /api/v1/orders/$DYN$, which then matches the schema.'],
+    why: 'Automatic grouping catches numeric IDs. Templates override it for formats it misses. Segment types: Static, *, {int}, text-only, {int:split}.' },
+  { title: 'Mark /health as NON-API with a Discovery Rule', tab: 'inventory', done: (s) => !!s.objectives.rule,
+    do: ['API Inventory → Discovery tuning → Add rule (path = /health → NON-API).'],
+    expect: ['GET /health changes to non-api and drops out of shadow counts.'],
+    why: 'Load-balancer health checks are not APIs. Rules are evaluated top-down and the first match wins.' },
+  { title: 'Review the schema-vs-traffic comparison', tab: 'schema', done: (s) => !!s.objectives['review-comparison'],
+    do: ['Upload Schema first, then click Review comparison.'],
+    expect: ['A table of observed endpoints with In schema yes/no and their status.'],
+    why: 'This is a baseline comparison, not a diff tool: observed endpoints not in the schema stay flagged as shadow.' },
+];
+const TROUBLESHOOT = [
+  ['Replay says "no metadata reached the Collector"', 'Deploy APIsec LE, then finish BIG-IP Integration through a VS mode other than None.'],
+  ['Analyze Now says "no new metadata"', 'Replay a burst first. Analyze Now only processes queued records.'],
+  ['Every endpoint is "shadow"', 'Expected until you Upload Schema or Move to Inventory. Shadow means undocumented or unmanaged.'],
+  ['Approving lost me XP', 'You approved GET /api/v1/debug/users. It is unauthenticated and returns SSNs: block it instead.'],
+  ['No zombie after fast-forward', 'legacy-auth must have been seen first. Replay Normal users and Analyze Now, then fast-forward again.'],
+  ['Block failed', 'Expected the first time (HTTP/HTTPS known issue). Use the Fundamental-template fix, then Block again.'],
+  ['debug/users is missing from Enforcement', 'The list shows shadow, zombie and blocked endpoints. If you deleted it, replay Shadow debug calls and Analyze Now.'],
+  ['Order IDs show as separate rows', 'Add the Dynamic Path Template (Module 2 bonus).'],
+  ['The next module is locked', 'Pass the current module\'s Boss Quiz with 75% or more.'],
+];
+
+/* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 const initialState = () => ({
   xp: 0, seq: 1, objectives: {}, missionsDone: {}, badges: {}, quizzes: {}, inspected: {}, hints: {},
   module: 1, mission: 1, view: 'split', tab: 'deploy', node: null, selected: null, drawer: false, quiz: null,
+  guide: true, guideTab: 'start', // Lab Guide panel (free step-by-step walkthroughs)
   deploy: { pkg: 'compose', status: 'idle', step: 0 },
   login: 0, // 0 not signed in · 1 signed in, password change required · 2 done
   license: 0, // stepper: 0 none · 1 JWT registered · 2 report downloaded · 3 active
@@ -415,7 +655,11 @@ function reducer(state, a) {
     case 'RESET': return initialState();
     case 'SET': return { ...s, ...a.patch };
     case 'VIEW': return { ...s, view: a.view };
-    case 'TAB': return { ...s, tab: a.tab, view: s.view === 'flow' ? 'split' : s.view };
+    case 'TAB': return { ...s, tab: a.tab, view: ['flow', 'components'].includes(s.view) ? 'split' : s.view };
+    case 'GOTO': { // from the Lab Guide: open a console tab and/or make sure the canvas is visible
+      const view = s.view === 'components' || (a.tab && s.view === 'flow') || (a.canvas && s.view === 'console') ? 'split' : s.view;
+      return { ...s, view, tab: a.tab || s.tab };
+    }
     case 'MODULE': return { ...s, module: a.id, tab: MODULES[a.id - 1].tab };
     case 'DISMISS': return { ...s, toasts: s.toasts.filter((t) => t.id !== a.id) };
     case 'PRUNE': return s.packets.some((p) => a.now > p.start + p.dur * 1.5) ? { ...s, packets: s.packets.filter((p) => a.now <= p.start + p.dur * 1.5) } : s;
@@ -743,6 +987,7 @@ function HUD({ s, dispatch }) {
           <a href="./ai-security.html" className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800" title="Open the F5 AI Security simulator">
             <Sparkles size={14} /> AI Security sim
           </a>
+          <Btn variant={s.guide ? 'cyan' : 'default'} onClick={() => dispatch({ type: 'SET', patch: { guide: !s.guide } })} title="Free step-by-step walkthroughs for every mission"><Compass size={14} /> Lab Guide</Btn>
           <Btn onClick={() => dispatch({ type: 'SET', patch: { drawer: true } })}><Lightbulb size={14} className="text-amber-400" /> Field Guide</Btn>
           <Btn onClick={() => { if (window.confirm('Reset the simulation, XP and badges?')) dispatch({ type: 'RESET' }); }}><RotateCcw size={14} /> Reset Simulation</Btn>
         </div>
@@ -792,7 +1037,7 @@ function Sidebar({ s, dispatch }) {
         <h3 className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400"><Target size={13} /> Missions</h3>
         <div className="mb-3 grid grid-cols-3 gap-1">
           {MISSIONS.map((m) => (
-            <button key={m.id} onClick={() => dispatch({ type: 'SET', patch: { mission: m.id } })}
+            <button key={m.id} onClick={() => dispatch({ type: 'SET', patch: { mission: m.id, guideTab: m.id } })}
               className={`rounded-md border px-1 py-1.5 text-[11px] font-semibold transition ${s.mission === m.id ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300' : 'border-slate-700 text-slate-400 hover:text-slate-200'}`}>
               {s.missionsDone[m.id] ? '✓ ' : ''}M{m.id}
             </button>
@@ -801,6 +1046,7 @@ function Sidebar({ s, dispatch }) {
         <div key={mission.id} className="animate-fade-in">
           <div className="text-sm font-semibold text-white">{mission.title}</div>
           <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{mission.brief}</p>
+          <Btn variant="cyan" className="mt-2 w-full" onClick={() => dispatch({ type: 'SET', patch: { guide: true, guideTab: mission.id } })}><ListChecks size={13} /> Step-by-step walkthrough</Btn>
           <div className="my-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
             <div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: `${(done / mission.objectives.length) * 100}%` }} />
           </div>
@@ -988,6 +1234,7 @@ function Inspector({ id, s, onClose }) {
   const info = NODE_INFO[id.startsWith('svc') ? 'svc' : id];
   const I = n.icon || Layers;
   const inFocus = MODULES[s.module - 1].focus.includes(id);
+  const comp = COMPONENTS[id.startsWith('svc') ? 'svc' : id];
   return (
     <div key={id} className="animate-fade-in mt-3 grid gap-3 rounded-xl border border-slate-700 bg-[#0b1120]/95 p-4 md:grid-cols-2">
       <div>
@@ -1000,7 +1247,15 @@ function Inspector({ id, s, onClose }) {
         <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={16} /></button>
       </div>
       {inFocus && <Pill color={C.crimson} className="mb-2">Module {s.module} focus</Pill>}
+      {comp && <p className="mb-2 rounded-md border border-cyan-500/30 bg-cyan-500/5 p-2 text-xs leading-relaxed text-slate-200"><span className="font-semibold text-cyan-300">In plain words: </span>{comp.plain}</p>}
       <p className="text-xs leading-relaxed text-slate-300">{info.role}</p>
+      {comp && (
+        <div className="mt-2 grid grid-cols-[70px_1fr] gap-y-1 text-[11px]">
+          <span className="text-slate-500">Receives</span><span className="text-slate-300">{comp.gets}</span>
+          <span className="text-slate-500">Sends</span><span className="text-slate-300">{comp.sends}</span>
+          <span className="text-slate-500">In the lab</span><span className="text-slate-300">{comp.lab}</span>
+        </div>
+      )}
       <div className="mt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Operational notes</div>
       <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-300">{info.ops.map((o) => <li key={o}>{o}</li>)}</ul>
       </div>
@@ -1506,6 +1761,209 @@ function LogPane({ logs }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Lab Guide panel + Component Guide view                              */
+/* ------------------------------------------------------------------ */
+const TAB_LABEL = Object.fromEntries(TABS.map((t) => [t.id, t.label]));
+
+function GuideStep({ n, step, s, dispatch, current }) {
+  const ok = step.done(s);
+  const [open, setOpen] = useState(false);
+  const show = current || open;
+  return (
+    <li className={`rounded-lg border p-2.5 transition ${current ? 'border-cyan-500/70 bg-cyan-500/5' : ok ? 'border-slate-800 bg-slate-900/30' : 'border-slate-800 bg-slate-900/60'}`}>
+      <button className="flex w-full items-start gap-2 text-left" onClick={() => setOpen(!open)}>
+        {ok ? <CheckCircle2 size={16} className="mt-px shrink-0 text-cyan-400" />
+          : <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${current ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-300'}`}>{n}</span>}
+        <span className={`flex-1 text-xs font-semibold ${ok ? 'text-slate-500' : 'text-slate-100'}`}>{step.title}</span>
+        {current && <Pill color={C.cyan}>you are here</Pill>}
+        {!current && <ChevronRight size={13} className={`mt-px shrink-0 text-slate-500 transition ${open ? 'rotate-90' : ''}`} />}
+      </button>
+      {show && (
+        <div className="animate-fade-in mt-2 space-y-2 pl-6 text-[11.5px] leading-relaxed">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">Where</span>
+            <span className="text-slate-300">{step.canvas ? 'Flow canvas' : `Console → ${TAB_LABEL[step.tab]}`}</span>
+            <Btn variant="cyan" className="ml-auto !px-2 !py-0.5" onClick={() => dispatch({ type: 'GOTO', tab: step.tab, canvas: step.canvas })}><MousePointerClick size={12} /> Take me there</Btn>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Do</div>
+            <ol className="mt-0.5 list-decimal space-y-0.5 pl-4 text-slate-200">{step.do.map((x) => <li key={x}>{x}</li>)}</ol>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">You should see</div>
+            <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-slate-300">{step.expect.map((x) => <li key={x}>{x}</li>)}</ul>
+          </div>
+          <p className="rounded-md border border-slate-800 bg-slate-950/60 p-1.5 text-slate-400"><span className="font-semibold text-amber-300">Why it matters: </span>{step.why}</p>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function GuideSteps({ steps, s, dispatch }) {
+  const cur = steps.findIndex((st) => !st.done(s));
+  return <ol className="space-y-2">{steps.map((st, i) => <GuideStep key={st.title} n={i + 1} step={st} s={s} dispatch={dispatch} current={i === cur} />)}</ol>;
+}
+
+function LabGuide({ s, dispatch }) {
+  const t = s.guideTab;
+  const tabs = [['start', 'Start'], [1, 'M1'], [2, 'M2'], [3, 'M3'], ['bonus', 'Bonus'], ['help', 'Fixes']];
+  const close = () => dispatch({ type: 'SET', patch: { guide: false } });
+  return (
+    <aside className="animate-slide-in fixed inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-slate-700 bg-[#0b1120] shadow-2xl xl:sticky xl:inset-auto xl:top-[76px] xl:z-auto xl:h-[calc(100vh-92px)] xl:w-auto xl:max-w-none xl:rounded-xl xl:border xl:border-slate-800 xl:shadow-none xl:animate-none">
+      <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2.5">
+        <Compass size={16} className="text-cyan-400" />
+        <div className="flex-1">
+          <div className="text-sm font-bold text-white">Lab Guide</div>
+          <div className="text-[10px] text-slate-500">Step-by-step walkthroughs · free, no XP cost</div>
+        </div>
+        <button onClick={close} className="text-slate-400 hover:text-white" title="Hide the Lab Guide"><PanelRightClose size={17} /></button>
+      </div>
+      <div className="flex gap-1 border-b border-slate-800 px-2 py-1.5">
+        {tabs.map(([id, label]) => {
+          const done = typeof id === 'number' && s.missionsDone[id];
+          return (
+            <button key={id} onClick={() => dispatch({ type: 'SET', patch: typeof id === 'number' ? { guideTab: id, mission: id } : { guideTab: id } })}
+              className={`flex-1 rounded-md px-1.5 py-1 text-[11px] font-semibold transition ${t === id ? 'bg-cyan-500/15 text-cyan-300' : 'text-slate-400 hover:text-slate-200'}`}>{done ? '✓ ' : ''}{label}</button>
+          );
+        })}
+      </div>
+      <div key={String(t)} className="animate-fade-in flex-1 overflow-y-auto p-3">
+        {t === 'start' && <GuideStart s={s} dispatch={dispatch} />}
+        {typeof t === 'number' && (() => {
+          const g = LAB_GUIDE[t];
+          const m = MISSIONS[t - 1];
+          const n = g.steps.filter((st) => st.done(s)).length;
+          return (
+            <>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">Mission {m.id}</div>
+              <div className="text-sm font-semibold text-white">{m.title}</div>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-slate-300"><span className="font-semibold text-cyan-300">Goal: </span>{g.goal}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-400"><span className="font-semibold text-slate-300">Before you start: </span>{g.before}</p>
+              <div className="my-2 flex items-center gap-2 text-[10px] text-slate-500">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-cyan-500 transition-all" style={{ width: `${(n / g.steps.length) * 100}%` }} /></div>
+                {n}/{g.steps.length} steps
+              </div>
+              <GuideSteps steps={g.steps} s={s} dispatch={dispatch} />
+              <div className={`mt-3 flex items-start gap-2 rounded-md border p-2 text-[11px] ${s.missionsDone[t] ? 'border-amber-500/50 bg-amber-500/10 text-amber-100' : 'border-slate-800 text-slate-400'}`}>
+                <Flag size={13} className="mt-px shrink-0" /><span>{g.result}</span>
+              </div>
+            </>
+          );
+        })()}
+        {t === 'bonus' && (
+          <>
+            <p className="mb-2 text-[11.5px] text-slate-400">Optional labs that deepen Modules 2 and 4. Each is worth 20 XP and can be done any time after Mission 1.</p>
+            <GuideSteps steps={BONUS_GUIDE} s={s} dispatch={dispatch} />
+          </>
+        )}
+        {t === 'help' && (
+          <>
+            <p className="mb-2 flex items-center gap-1.5 text-[11.5px] text-slate-400"><Wrench size={13} /> Stuck? Common causes and fixes.</p>
+            <ul className="space-y-2">
+              {TROUBLESHOOT.map(([q, a]) => (
+                <li key={q} className="rounded-md border border-slate-800 bg-slate-900/60 p-2 text-[11.5px]">
+                  <div className="font-semibold text-slate-100">{q}</div>
+                  <div className="mt-0.5 text-slate-400">{a}</div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function GuideStart({ s, dispatch }) {
+  const tour = [
+    ['Top bar (HUD)', 'Rank, XP, mastery and badges. Lab Guide toggles this panel; Field Guide holds reference pages that cost XP; Reset Simulation starts over.'],
+    ['Left: Skill Tree & Missions', 'Pick a module (each Boss Quiz unlocks the next) and a mission. The objectives tick themselves as you work.'],
+    ['Centre: Workbench', 'The flow canvas (click any box to inspect it) and the Console Lab, which simulates the APIsec LE Web UI. Switch between Split, Architecture Flow, Console Lab and Component Guide.'],
+    ['Event log', 'At the bottom of the console. Read it after every click: it says what happened and what to do next.'],
+  ];
+  const plan = [
+    ['Mission 1', 'Module 1', 'Deploy, integrate BIG-IP, discover endpoints'],
+    ['Mission 2', 'Modules 2–3', 'Shadow API, PII, schema, inventory, zombie'],
+    ['Mission 3', 'Module 4', 'Block through the WAF policy, verify, export'],
+  ];
+  return (
+    <div className="space-y-3 text-[11.5px] leading-relaxed">
+      <p className="text-slate-300">You play a SecOps engineer at a bank. BIG-IP already fronts the API. Your job: stand up F5 API Security Local Edition on a local, air-gapped host, find what the API really exposes, and have BIG-IP block what should not be there.</p>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">The screen</div>
+        <ul className="space-y-1.5">{tour.map(([k, v]) => <li key={k}><span className="font-semibold text-slate-100">{k}. </span><span className="text-slate-400">{v}</span></li>)}</ul>
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Recommended order</div>
+        <table className="w-full">
+          <tbody>{plan.map(([m, mod, d]) => <tr key={m} className="border-t border-slate-800 align-top"><td className="py-1 pr-2 font-semibold text-cyan-300">{m}</td><td className="py-1 pr-2 text-slate-400">{mod}</td><td className="py-1 text-slate-300">{d}</td></tr>)}</tbody>
+        </table>
+        <p className="mt-1 text-slate-500">Each mission builds on the state left by the previous one, so play them in order. Take a module's Boss Quiz once you have done its mission.</p>
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Packet colours</div>
+        <div className="flex flex-wrap gap-2 text-[10.5px] text-slate-400">
+          {[[C.cyan, 'clean traffic / telemetry'], [C.amber, 'shadow API'], [C.violet, 'legacy / zombie'], [C.rose, 'PII leak'], [C.crimson, 'blocked / enforcement']].map(([c, x]) => <span key={x} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: c }} />{x}</span>)}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn variant="primary" onClick={() => dispatch({ type: 'SET', patch: { guideTab: 1, mission: 1 } })}><Play size={12} /> Start Mission 1</Btn>
+        <Btn onClick={() => dispatch({ type: 'VIEW', view: 'components' })}><Route size={12} /> What does each component do?</Btn>
+      </div>
+      <p className="flex items-start gap-1.5 text-[10.5px] text-slate-500"><Info size={12} className="mt-0.5 shrink-0" /> Product behaviour follows the F5 API Security Local Edition 1.2.6 docs. Hostnames, IPs, endpoint names, timings and risk weights are simulated.</p>
+    </div>
+  );
+}
+
+function ComponentGuide({ s, dispatch }) {
+  const show = (node) => { dispatch({ type: 'VIEW', view: 'split' }); dispatch({ type: 'INSPECT', id: node }); };
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+        <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400"><Route size={13} /> Follow one request end to end</div>
+        <ol className="grid gap-2 md:grid-cols-2">
+          {JOURNEY.map(([id, text], i) => (
+            <li key={id} className="flex gap-2 rounded-lg border border-slate-800 bg-slate-900/50 p-2 text-xs leading-relaxed">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#e4002b]/20 text-[10px] font-bold text-[#ff4d6d]">{i + 1}</span>
+              <span className="text-slate-300"><button className="font-semibold text-cyan-300 hover:underline" onClick={() => show(COMPONENTS[id].node)}>{COMPONENTS[id].name}.</button> {text}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+      {COMPONENT_GROUPS.map((g) => (
+        <section key={g.title}>
+          <h3 className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest" style={{ color: g.color }}><span className="h-2 w-2 rounded-full" style={{ background: g.color }} />{g.title}</h3>
+          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {g.ids.map((id) => {
+              const c = COMPONENTS[id];
+              const info = NODE_INFO[id === 'irule' ? 'vs' : id === 'deploy' ? null : id];
+              const seen = s.inspected[id === 'irule' ? 'vs' : id];
+              return (
+                <article key={id} className="flex flex-col rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <div className="mb-1 flex items-start gap-2">
+                    <div className="flex-1 text-sm font-semibold text-white">{c.name}</div>
+                    {seen && <Pill color={C.cyan}>inspected</Pill>}
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-300">{c.plain}</p>
+                  <div className="mt-2 grid grid-cols-[70px_1fr] gap-y-1 text-[11px]">
+                    <span className="text-slate-500">Receives</span><span className="text-slate-300">{c.gets}</span>
+                    <span className="text-slate-500">Sends</span><span className="text-slate-300">{c.sends}</span>
+                    {info && <><span className="text-slate-500">Ports</span><span className="font-mono text-[10.5px] text-cyan-300">{info.ports.map(([p]) => p).join(' · ')}</span></>}
+                  </div>
+                  <p className="mt-2 rounded-md border border-slate-800 bg-slate-950/60 p-1.5 text-[11px] text-slate-400"><span className="font-semibold text-amber-300">In the lab: </span>{c.lab}</p>
+                  <div className="mt-auto pt-2"><Btn variant="ghost" className="!px-0" onClick={() => show(c.node)}><Eye size={12} /> Show on canvas</Btn></div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Overlays: block confirm, field guide, boss quiz, toasts             */
 /* ------------------------------------------------------------------ */
 function BlockConfirm({ s, dispatch }) {
@@ -1680,6 +2138,7 @@ export default function APIsecSimulator() {
     { id: 'split', label: 'Split Workbench', icon: Columns2 },
     { id: 'flow', label: 'Architecture Flow', icon: Workflow },
     { id: 'console', label: 'Console Lab', icon: Terminal },
+    { id: 'components', label: 'Component Guide', icon: Route },
   ], []);
 
   const flowPanel = (
@@ -1697,7 +2156,7 @@ export default function APIsecSimulator() {
   return (
     <div className="min-h-screen bg-[#0b1120] text-slate-200" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif' }}>
       <HUD s={s} dispatch={dispatch} />
-      <main className="mx-auto grid max-w-[1600px] gap-4 px-4 py-4 lg:grid-cols-[280px_1fr]">
+      <main className={`mx-auto grid gap-4 px-4 py-4 lg:grid-cols-[280px_minmax(0,1fr)] ${s.guide ? 'max-w-[1960px] xl:grid-cols-[260px_minmax(0,1fr)_380px]' : 'max-w-[1600px]'}`}>
         <Sidebar s={s} dispatch={dispatch} />
         <div className="min-w-0 space-y-4">
           <section key={mod.id} className="animate-fade-in rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 to-[#0b1120] p-4">
@@ -1710,9 +2169,9 @@ export default function APIsecSimulator() {
               <div className="flex flex-wrap gap-2">
                 <div className="flex rounded-lg border border-slate-700 p-0.5">
                   {views.map((v) => (
-                    <button key={v.id} onClick={() => dispatch({ type: 'VIEW', view: v.id })}
+                    <button key={v.id} title={v.label} onClick={() => dispatch({ type: 'VIEW', view: v.id })}
                       className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${s.view === v.id ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>
-                      <v.icon size={13} /> <span className="hidden sm:inline">{v.label}</span>
+                      <v.icon size={13} /> <span className={s.guide ? 'hidden 2xl:inline' : 'hidden sm:inline'}>{v.label}</span>
                     </button>
                   ))}
                 </div>
@@ -1728,6 +2187,7 @@ export default function APIsecSimulator() {
             {s.view === 'split' && <div className="grid gap-4 min-[1900px]:grid-cols-[1.2fr_1fr]">{flowPanel}{consolePanel}</div>}
             {s.view === 'flow' && flowPanel}
             {s.view === 'console' && consolePanel}
+            {s.view === 'components' && <ComponentGuide s={s} dispatch={dispatch} />}
           </div>
 
           <footer className="pb-6 text-[10.5px] leading-relaxed text-slate-500">
@@ -1736,6 +2196,7 @@ export default function APIsecSimulator() {
             risk-factor weights are simulated. F5 does not publish sizing figures, risk weights or the iRule body in its docs.
           </footer>
         </div>
+        {s.guide && <LabGuide s={s} dispatch={dispatch} />}
       </main>
 
       {s.drawer && <FieldGuide s={s} dispatch={dispatch} />}
